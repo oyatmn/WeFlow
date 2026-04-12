@@ -15,8 +15,10 @@
 
 import https from 'https'
 import http from 'http'
+import fs from 'fs'
+import path from 'path'
 import { URL } from 'url'
-import { Notification } from 'electron'
+import { app, Notification } from 'electron'
 import { ConfigService } from './config'
 import { chatService, ChatSession, Message } from './chatService'
 
@@ -33,6 +35,8 @@ const SILENCE_SCAN_INITIAL_DELAY_MS = 3 * 60 * 1000
 
 /** 单次 API 请求超时（毫秒） */
 const API_TIMEOUT_MS = 45_000
+const API_MAX_TOKENS = 200
+const API_TEMPERATURE = 0.7
 
 /** 沉默天数阈值默认值 */
 const DEFAULT_SILENCE_DAYS = 3
@@ -62,15 +66,74 @@ interface SharedAiModelConfig {
 
 // ─── 日志 ─────────────────────────────────────────────────────────────────────
 
+type InsightLogLevel = 'INFO' | 'WARN' | 'ERROR'
+
+let debugLogWriteQueue: Promise<void> = Promise.resolve()
+
+function formatDebugTimestamp(date: Date = new Date()): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hours = String(date.getHours()).padStart(2, '0')
+  const minutes = String(date.getMinutes()).padStart(2, '0')
+  const seconds = String(date.getSeconds()).padStart(2, '0')
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
+}
+
+function getInsightDebugLogFilePath(date: Date = new Date()): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return path.join(app.getPath('desktop'), `weflow-ai-insight-debug-${year}-${month}-${day}.log`)
+}
+
+function isInsightDebugLogEnabled(): boolean {
+  try {
+    return ConfigService.getInstance().get('aiInsightDebugLogEnabled') === true
+  } catch {
+    return false
+  }
+}
+
+function appendInsightDebugText(text: string): void {
+  if (!isInsightDebugLogEnabled()) return
+
+  let logFilePath = ''
+  try {
+    logFilePath = getInsightDebugLogFilePath()
+  } catch {
+    return
+  }
+
+  debugLogWriteQueue = debugLogWriteQueue
+    .then(() => fs.promises.appendFile(logFilePath, text, 'utf8'))
+    .catch(() => undefined)
+}
+
+function insightDebugLine(level: InsightLogLevel, message: string): void {
+  appendInsightDebugText(`[${formatDebugTimestamp()}] [${level}] ${message}\n`)
+}
+
+function insightDebugSection(level: InsightLogLevel, title: string, payload: unknown): void {
+  const content = typeof payload === 'string'
+    ? payload
+    : JSON.stringify(payload, null, 2)
+
+  appendInsightDebugText(
+    `\n========== [${formatDebugTimestamp()}] [${level}] ${title} ==========\n${content}\n========== END ==========\n`
+  )
+}
+
 /**
  * 仅输出到 console，不落盘到文件。
  */
-function insightLog(level: 'INFO' | 'WARN' | 'ERROR', message: string): void {
+function insightLog(level: InsightLogLevel, message: string): void {
   if (level === 'ERROR' || level === 'WARN') {
     console.warn(`[InsightService] ${message}`)
   } else {
     console.log(`[InsightService] ${message}`)
   }
+  insightDebugLine(level, message)
 }
 
 // ─── 工具函数 ─────────────────────────────────────────────────────────────────
@@ -127,8 +190,8 @@ function callApi(
     const body = JSON.stringify({
       model,
       messages,
-      max_tokens: 200,
-      temperature: 0.7,
+      max_tokens: API_MAX_TOKENS,
+      temperature: API_TEMPERATURE,
       stream: false
     })
 
@@ -336,15 +399,34 @@ class InsightService {
     }
 
     try {
+      const endpoint = buildApiUrl(apiBaseUrl, '/chat/completions')
+      const requestMessages = [{ role: 'user', content: '请回复"连接成功"四个字。' }]
+      insightDebugSection('INFO', 'AI 测试连接请求', {
+        endpoint,
+        model,
+        request: {
+          model,
+          messages: requestMessages,
+          max_tokens: API_MAX_TOKENS,
+          temperature: API_TEMPERATURE,
+          stream: false
+        }
+      })
+
       const result = await callApi(
         apiBaseUrl,
         apiKey,
         model,
-        [{ role: 'user', content: '请回复"连接成功"四个字。' }],
+        requestMessages,
         15_000
       )
+      insightDebugSection('INFO', 'AI 测试连接输出原文', result)
       return { success: true, message: `连接成功，模型回复：${result.slice(0, 50)}` }
     } catch (e) {
+      insightDebugSection('ERROR', 'AI 测试连接失败', {
+        error: (e as Error).message,
+        stack: (e as Error).stack ?? null
+      })
       return { success: false, message: `连接失败：${(e as Error).message}` }
     }
   }
@@ -884,20 +966,40 @@ ${topMentionText}
 请给出你的见解（≤80字）：`
 
     const endpoint = buildApiUrl(apiBaseUrl, '/chat/completions')
+    const requestMessages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
+    ]
+
     insightLog('INFO', `准备调用 API: ${endpoint}，模型: ${model}`)
+    insightDebugSection('INFO', `AI 请求 ${displayName} (${sessionId})`, {
+      sessionId,
+      displayName,
+      triggerReason,
+      silentDays: silentDays ?? null,
+      endpoint,
+      model,
+      allowContext,
+      contextCount,
+      request: {
+        model,
+        messages: requestMessages,
+        max_tokens: API_MAX_TOKENS,
+        temperature: API_TEMPERATURE,
+        stream: false
+      }
+    })
 
     try {
       const result = await callApi(
         apiBaseUrl,
         apiKey,
         model,
-        [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ]
+        requestMessages
       )
 
       insightLog('INFO', `API 返回原文: ${result.slice(0, 150)}`)
+      insightDebugSection('INFO', `AI 输出原文 ${displayName} (${sessionId})`, result)
 
       // 模型主动选择跳过
       if (result.trim().toUpperCase() === 'SKIP' || result.trim().startsWith('SKIP')) {
@@ -939,6 +1041,13 @@ ${topMentionText}
 
       insightLog('INFO', `已为 ${displayName} 推送见解`)
     } catch (e) {
+      insightDebugSection('ERROR', `AI 请求失败 ${displayName} (${sessionId})`, {
+        sessionId,
+        displayName,
+        triggerReason,
+        error: (e as Error).message,
+        stack: (e as Error).stack ?? null
+      })
       insightLog('ERROR', `API 调用失败 (${displayName}): ${(e as Error).message}`)
     }
   }

@@ -106,7 +106,8 @@ export const CONFIG_KEYS = {
 
   // AI 足迹
   AI_FOOTPRINT_ENABLED: 'aiFootprintEnabled',
-  AI_FOOTPRINT_SYSTEM_PROMPT: 'aiFootprintSystemPrompt'
+  AI_FOOTPRINT_SYSTEM_PROMPT: 'aiFootprintSystemPrompt',
+  AI_INSIGHT_DEBUG_LOG_ENABLED: 'aiInsightDebugLogEnabled'
 } as const
 
 export interface WxidConfig {
@@ -1802,4 +1803,13 @@ export async function getAiFootprintSystemPrompt(): Promise<string> {
 
 export async function setAiFootprintSystemPrompt(prompt: string): Promise<void> {
   await config.set(CONFIG_KEYS.AI_FOOTPRINT_SYSTEM_PROMPT, prompt)
+}
+
+export async function getAiInsightDebugLogEnabled(): Promise<boolean> {
+  const value = await config.get(CONFIG_KEYS.AI_INSIGHT_DEBUG_LOG_ENABLED)
+  return value === true
+}
+
+export async function setAiInsightDebugLogEnabled(enabled: boolean): Promise<void> {
+  await config.set(CONFIG_KEYS.AI_INSIGHT_DEBUG_LOG_ENABLED, enabled)
 }

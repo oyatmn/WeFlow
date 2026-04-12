@@ -102,6 +102,8 @@ interface ConfigSchema {
   // AI 足迹
   aiFootprintEnabled: boolean
   aiFootprintSystemPrompt: string
+  /** 是否将 AI 见解调试日志输出到桌面 */
+  aiInsightDebugLogEnabled: boolean
 }
 
 // 需要 safeStorage 加密的字段（普通模式）
@@ -204,7 +206,8 @@ export class ConfigService {
       aiInsightTelegramToken: '',
       aiInsightTelegramChatIds: '',
       aiFootprintEnabled: false,
-      aiFootprintSystemPrompt: ''
+      aiFootprintSystemPrompt: '',
+      aiInsightDebugLogEnabled: false
     }
 
     const storeOptions: any = {
