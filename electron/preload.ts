@@ -219,6 +219,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
         allowStaleCache?: boolean
         preferAccurateSpecialTypes?: boolean
         cacheOnly?: boolean
+        beginTimestamp?: number
+        endTimestamp?: number
       }
     ) => ipcRenderer.invoke('chat:getExportSessionStats', sessionIds, options),
     getGroupMyMessageCountHint: (chatroomId: string) =>
@@ -565,4 +567,3 @@ contextBridge.exposeInMainWorld('electronAPI', {
     validateWeiboUid: (uid: string) => ipcRenderer.invoke('social:validateWeiboUid', uid)
   }
 })
-

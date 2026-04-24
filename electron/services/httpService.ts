@@ -76,6 +76,12 @@ interface ApiExportedMedia {
   relativePath: string
 }
 
+interface MessagePushReplayEvent {
+  id: number
+  body: string
+  createdAt: number
+}
+
 // ChatLab 消息类型映射
 const ChatLabType = {
   TEXT: 0,
@@ -107,8 +113,12 @@ class HttpService {
   private running: boolean = false
   private connections: Set<import('net').Socket> = new Set()
   private messagePushClients: Set<http.ServerResponse> = new Set()
+  private messagePushReplayBuffer: MessagePushReplayEvent[] = []
   private messagePushHeartbeatTimer: ReturnType<typeof setInterval> | null = null
   private connectionMutex: boolean = false
+  private messagePushEventId = 0
+  private readonly messagePushReplayLimit = 1000
+  private readonly messagePushReplayTtlMs = 10 * 60 * 1000
 
   constructor() {
     this.configService = ConfigService.getInstance()
@@ -178,6 +188,7 @@ class HttpService {
           } catch {}
         }
         this.messagePushClients.clear()
+        this.messagePushReplayBuffer = []
         if (this.messagePushHeartbeatTimer) {
           clearInterval(this.messagePushHeartbeatTimer)
           this.messagePushHeartbeatTimer = null
@@ -232,9 +243,57 @@ class HttpService {
     return `http://${this.host}:${this.port}/api/v1/push/messages`
   }
 
+  private nextMessagePushEventId(): number {
+    this.messagePushEventId += 1
+    if (!Number.isSafeInteger(this.messagePushEventId) || this.messagePushEventId <= 0) {
+      this.messagePushEventId = 1
+    }
+    return this.messagePushEventId
+  }
+
+  private rememberMessagePushEvent(id: number, body: string): void {
+    this.pruneMessagePushReplayBuffer()
+    this.messagePushReplayBuffer.push({ id, body, createdAt: Date.now() })
+    if (this.messagePushReplayBuffer.length > this.messagePushReplayLimit) {
+      this.messagePushReplayBuffer.splice(0, this.messagePushReplayBuffer.length - this.messagePushReplayLimit)
+    }
+  }
+
+  private pruneMessagePushReplayBuffer(): void {
+    const cutoff = Date.now() - this.messagePushReplayTtlMs
+    while (this.messagePushReplayBuffer.length > 0 && this.messagePushReplayBuffer[0].createdAt < cutoff) {
+      this.messagePushReplayBuffer.shift()
+    }
+  }
+
+  private parseMessagePushLastEventId(req: http.IncomingMessage, url?: URL): number {
+    const queryValue = url?.searchParams.get('lastEventId') || url?.searchParams.get('last_event_id') || ''
+    const headerValue = Array.isArray(req.headers['last-event-id'])
+      ? req.headers['last-event-id'][0]
+      : req.headers['last-event-id']
+    const parsed = Number.parseInt(String(queryValue || headerValue || '0').trim(), 10)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+  }
+
+  private replayMessagePushEvents(res: http.ServerResponse, lastEventId: number): void {
+    this.pruneMessagePushReplayBuffer()
+    const events = lastEventId > 0
+      ? this.messagePushReplayBuffer.filter((event) => event.id > lastEventId)
+      : this.messagePushReplayBuffer
+
+    for (const event of events) {
+      if (res.writableEnded || res.destroyed) return
+      res.write(event.body)
+    }
+  }
+
   broadcastMessagePush(payload: Record<string, unknown>): void {
-    if (!this.running || this.messagePushClients.size === 0) return
-    const eventBody = `event: message.new\ndata: ${JSON.stringify(payload)}\n\n`
+    if (!this.running) return
+    const eventId = this.nextMessagePushEventId()
+    const eventName = this.getMessagePushEventName(payload)
+    const eventBody = `id: ${eventId}\nevent: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`
+    this.rememberMessagePushEvent(eventId, eventBody)
+    if (this.messagePushClients.size === 0) return
 
     for (const client of Array.from(this.messagePushClients)) {
       try {
@@ -248,6 +307,11 @@ class HttpService {
         try { client.end() } catch {}
       }
     }
+  }
+
+  private getMessagePushEventName(payload: Record<string, unknown>): string {
+    const eventName = String(payload?.event || '').trim()
+    return /^[a-z0-9._-]+$/i.test(eventName) ? eventName : 'message.new'
   }
 
   async autoStart(): Promise<void> {
@@ -365,7 +429,7 @@ class HttpService {
             if (pathname === '/health' || pathname === '/api/v1/health') {
                 this.sendJson(res, { status: 'ok' })
             } else if (pathname === '/api/v1/push/messages') {
-                this.handleMessagePushStream(req, res)
+                this.handleMessagePushStream(req, res, url)
             } else if (pathname === '/api/v1/messages') {
                 await this.handleMessages(url, res)
             } else if (pathname === '/api/v1/sessions') {
@@ -440,7 +504,7 @@ class HttpService {
     }, 25000)
   }
 
-  private handleMessagePushStream(req: http.IncomingMessage, res: http.ServerResponse): void {
+  private handleMessagePushStream(req: http.IncomingMessage, res: http.ServerResponse, url: URL): void {
     if (this.configService.get('messagePushEnabled') !== true) {
       this.sendError(res, 403, 'Message push is disabled')
       return
@@ -453,9 +517,10 @@ class HttpService {
       'X-Accel-Buffering': 'no'
     })
     res.flushHeaders?.()
-    res.write(`event: ready\ndata: ${JSON.stringify({ success: true, stream: this.getMessagePushStreamUrl() })}\n\n`)
 
     this.messagePushClients.add(res)
+    res.write(`event: ready\ndata: ${JSON.stringify({ success: true, stream: this.getMessagePushStreamUrl() })}\n\n`)
+    this.replayMessagePushEvents(res, this.parseMessagePushLastEventId(req, url))
 
     const cleanup = () => {
       this.messagePushClients.delete(res)
@@ -496,11 +561,20 @@ class HttpService {
     const contentType = mimeTypes[ext] || 'application/octet-stream'
 
     try {
-      const fileBuffer = fs.readFileSync(fullPath)
+      const stat = fs.statSync(fullPath)
       res.setHeader('Content-Type', contentType)
-      res.setHeader('Content-Length', fileBuffer.length)
+      res.setHeader('Content-Length', stat.size)
       res.writeHead(200)
-      res.end(fileBuffer)
+
+      const stream = fs.createReadStream(fullPath)
+      stream.on('error', () => {
+        if (!res.headersSent) {
+          this.sendError(res, 500, 'Failed to read media file')
+        } else {
+          try { res.destroy() } catch {}
+        }
+      })
+      stream.pipe(res)
     } catch (e) {
       this.sendError(res, 500, 'Failed to read media file')
     }
@@ -516,27 +590,29 @@ class HttpService {
     limit: number,
     startTime: number,
     endTime: number,
-    ascending: boolean
+    ascending: boolean,
+    useLiteMapping: boolean = true
   ): Promise<{ success: boolean; messages?: Message[]; hasMore?: boolean; error?: string }> {
     try {
-      // 使用固定 batch 大小（与 limit 相同或最多 500）来减少循环次数
-      const batchSize = Math.min(limit, 500)
+      // 深分页时放大 batch，避免 offset 很大时出现大量小批次循环。
+      const batchSize = Math.min(2000, Math.max(500, limit))
       const beginTimestamp = startTime > 10000000000 ? Math.floor(startTime / 1000) : startTime
       const endTimestamp = endTime > 10000000000 ? Math.floor(endTime / 1000) : endTime
 
-      const cursorResult = await wcdbService.openMessageCursor(talker, batchSize, ascending, beginTimestamp, endTimestamp)
+      const cursorResult = await wcdbService.openMessageCursorLite(talker, batchSize, ascending, beginTimestamp, endTimestamp)
       if (!cursorResult.success || !cursorResult.cursor) {
         return { success: false, error: cursorResult.error || '打开消息游标失败' }
       }
 
       const cursor = cursorResult.cursor
       try {
-        const allRows: Record<string, any>[] = []
+        const collectedRows: Record<string, any>[] = []
         let hasMore = true
         let skipped = 0
+        let reachedLimit = false
 
         // 循环获取消息，处理 offset 跳过 + limit 累积
-        while (allRows.length < limit && hasMore) {
+        while (collectedRows.length < limit && hasMore) {
           const batch = await wcdbService.fetchMessageBatch(cursor)
           if (!batch.success || !batch.rows || batch.rows.length === 0) {
             hasMore = false
@@ -557,12 +633,20 @@ class HttpService {
             skipped = offset
           }
 
-          allRows.push(...rows)
+          const remainingCapacity = limit - collectedRows.length
+          if (rows.length > remainingCapacity) {
+            collectedRows.push(...rows.slice(0, remainingCapacity))
+            reachedLimit = true
+            break
+          }
+
+          collectedRows.push(...rows)
         }
 
-        const trimmedRows = allRows.slice(0, limit)
-        const finalHasMore = hasMore || allRows.length > limit
-        const messages = chatService.mapRowsToMessagesForApi(trimmedRows)
+        const finalHasMore = hasMore || reachedLimit
+        const messages = useLiteMapping
+          ? chatService.mapRowsToMessagesLiteForApi(collectedRows)
+          : chatService.mapRowsToMessagesForApi(collectedRows)
         await this.backfillMissingSenderUsernames(talker, messages)
         return { success: true, messages, hasMore: finalHasMore }
       } finally {
@@ -590,32 +674,70 @@ class HttpService {
     if (targets.length === 0) return
 
     const myWxid = (this.configService.get('myWxid') || '').trim()
-    for (const msg of targets) {
-      const localId = Number(msg.localId || 0)
-      if (Number.isFinite(localId) && localId > 0) {
-        try {
-          const detail = await wcdbService.getMessageById(talker, localId)
-          if (detail.success && detail.message) {
-            const hydrated = chatService.mapRowsToMessagesForApi([detail.message])[0]
-            if (hydrated?.senderUsername) {
-              msg.senderUsername = hydrated.senderUsername
-            }
-            if ((msg.isSend === null || msg.isSend === undefined) && hydrated?.isSend !== undefined) {
-              msg.isSend = hydrated.isSend
-            }
-            if (!msg.rawContent && hydrated?.rawContent) {
-              msg.rawContent = hydrated.rawContent
-            }
-          }
-        } catch (error) {
-          console.warn('[HttpService] backfill sender failed:', error)
+    const MAX_DETAIL_BACKFILL = 120
+    if (targets.length > MAX_DETAIL_BACKFILL) {
+      for (const msg of targets) {
+        if (!msg.senderUsername && msg.isSend === 1 && myWxid) {
+          msg.senderUsername = myWxid
         }
       }
+      return
+    }
 
-      if (!msg.senderUsername && msg.isSend === 1 && myWxid) {
-        msg.senderUsername = myWxid
+    const queue = [...targets]
+    const workerCount = Math.max(1, Math.min(6, queue.length))
+    const state = {
+      attempted: 0,
+      hydrated: 0,
+      consecutiveMiss: 0
+    }
+    const MAX_DETAIL_LOOKUPS = 80
+    const MAX_CONSECUTIVE_MISS = 36
+    const runWorker = async (): Promise<void> => {
+      while (queue.length > 0) {
+        if (state.attempted >= MAX_DETAIL_LOOKUPS) break
+        if (state.consecutiveMiss >= MAX_CONSECUTIVE_MISS && state.hydrated <= 0) break
+        const msg = queue.shift()
+        if (!msg) break
+
+        const localId = Number(msg.localId || 0)
+        if (Number.isFinite(localId) && localId > 0) {
+          state.attempted += 1
+          try {
+            const detail = await wcdbService.getMessageById(talker, localId)
+            if (detail.success && detail.message) {
+              const hydrated = chatService.mapRowsToMessagesForApi([detail.message])[0]
+              if (hydrated?.senderUsername) {
+                msg.senderUsername = hydrated.senderUsername
+              }
+              if ((msg.isSend === null || msg.isSend === undefined) && hydrated?.isSend !== undefined) {
+                msg.isSend = hydrated.isSend
+              }
+              if (!msg.rawContent && hydrated?.rawContent) {
+                msg.rawContent = hydrated.rawContent
+              }
+              if (msg.senderUsername) {
+                state.hydrated += 1
+                state.consecutiveMiss = 0
+              } else {
+                state.consecutiveMiss += 1
+              }
+            } else {
+              state.consecutiveMiss += 1
+            }
+          } catch (error) {
+            console.warn('[HttpService] backfill sender failed:', error)
+            state.consecutiveMiss += 1
+          }
+        }
+
+        if (!msg.senderUsername && msg.isSend === 1 && myWxid) {
+          msg.senderUsername = myWxid
+        }
       }
     }
+
+    await Promise.all(Array.from({ length: workerCount }, () => runWorker()))
   }
 
   private parseBooleanParam(url: URL, keys: string[], defaultValue: boolean = false): boolean {
@@ -663,7 +785,7 @@ class HttpService {
     const talker = (url.searchParams.get('talker') || '').trim()
     const limit = this.parseIntParam(url.searchParams.get('limit'), 100, 1, 10000)
     const offset = this.parseIntParam(url.searchParams.get('offset'), 0, 0, Number.MAX_SAFE_INTEGER)
-    const keyword = (url.searchParams.get('keyword') || '').trim().toLowerCase()
+    const keyword = (url.searchParams.get('keyword') || '').trim()
     const startParam = url.searchParams.get('start')
     const endParam = url.searchParams.get('end')
     const chatlab = this.parseBooleanParam(url, ['chatlab'], false)
@@ -683,26 +805,41 @@ class HttpService {
 
     const startTime = this.parseTimeParam(startParam)
     const endTime = this.parseTimeParam(endParam, true)
-    const queryOffset = keyword ? 0 : offset
-    const queryLimit = keyword ? 10000 : limit
-
-    const result = await this.fetchMessagesBatch(talker, queryOffset, queryLimit, startTime, endTime, false)
-    if (!result.success || !result.messages) {
-      this.sendError(res, 500, result.error || 'Failed to get messages')
-      return
-    }
-
-    let messages = result.messages
-    let hasMore = result.hasMore === true
+    let messages: Message[] = []
+    let hasMore = false
 
     if (keyword) {
-      const filtered = messages.filter((msg) => {
-        const content = (msg.parsedContent || msg.rawContent || '').toLowerCase()
-        return content.includes(keyword)
-      })
-      const endIndex = offset + limit
-      hasMore = filtered.length > endIndex
-      messages = filtered.slice(offset, endIndex)
+      const searchLimit = Math.max(1, limit) + 1
+      const searchResult = await chatService.searchMessages(
+        keyword,
+        talker,
+        searchLimit,
+        offset,
+        startTime,
+        endTime
+      )
+      if (!searchResult.success || !searchResult.messages) {
+        this.sendError(res, 500, searchResult.error || 'Failed to search messages')
+        return
+      }
+      hasMore = searchResult.messages.length > limit
+      messages = hasMore ? searchResult.messages.slice(0, limit) : searchResult.messages
+    } else {
+      const result = await this.fetchMessagesBatch(
+        talker,
+        offset,
+        limit,
+        startTime,
+        endTime,
+        false,
+        !mediaOptions.enabled
+      )
+      if (!result.success || !result.messages) {
+        this.sendError(res, 500, result.error || 'Failed to get messages')
+        return
+      }
+      messages = result.messages
+      hasMore = result.hasMore === true
     }
 
     const mediaMap = mediaOptions.enabled
@@ -812,7 +949,7 @@ class HttpService {
     const endTime = endParam ? this.parseTimeParam(endParam, true) : 0
 
     try {
-      const result = await this.fetchMessagesBatch(sessionId, offset, limit, startTime, endTime, true)
+      const result = await this.fetchMessagesBatch(sessionId, offset, limit, startTime, endTime, true, true)
       if (!result.success || !result.messages) {
         this.sendError(res, 500, result.error || 'Failed to get messages')
         return

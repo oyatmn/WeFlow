@@ -311,6 +311,8 @@ export interface ElectronAPI {
         allowStaleCache?: boolean
         preferAccurateSpecialTypes?: boolean
         cacheOnly?: boolean
+        beginTimestamp?: number
+        endTimestamp?: number
       }
     ) => Promise<{
       success: boolean
@@ -1218,6 +1220,4 @@ declare global {
 }
 
 export { }
-
-
 

@@ -321,10 +321,35 @@ class ExportService {
     )
   }
 
+  private normalizeTimestampSeconds(value: unknown): number {
+    const raw = Number(value)
+    if (!Number.isFinite(raw) || raw <= 0) return 0
+    let normalized = Math.floor(raw)
+    // 兼容毫秒/微秒/纳秒时间戳输入，统一降到秒级。
+    while (normalized > 10000000000) {
+      normalized = Math.floor(normalized / 1000)
+    }
+    return normalized
+  }
+
+  private normalizeExportDateRange(dateRange?: { start: number; end: number } | null): { start: number; end: number } | null {
+    if (!dateRange) return null
+    let start = this.normalizeTimestampSeconds(dateRange.start)
+    let end = this.normalizeTimestampSeconds(dateRange.end)
+    if (start > 0 && end > 0 && start > end) {
+      const tmp = start
+      start = end
+      end = tmp
+    }
+    if (start <= 0 && end <= 0) return null
+    return { start, end }
+  }
+
   private getExportStatsDateRangeToken(dateRange?: { start: number; end: number } | null): string {
-    if (!dateRange) return 'all'
-    const start = Number.isFinite(dateRange.start) ? Math.max(0, Math.floor(dateRange.start)) : 0
-    const end = Number.isFinite(dateRange.end) ? Math.max(0, Math.floor(dateRange.end)) : 0
+    const normalized = this.normalizeExportDateRange(dateRange)
+    if (!normalized) return 'all'
+    const start = normalized.start
+    const end = normalized.end
     return `${start}-${end}`
   }
 
@@ -528,8 +553,9 @@ class ExportService {
   }
 
   private formatDateTokenBySeconds(seconds?: number): string | null {
-    if (!Number.isFinite(seconds) || (seconds || 0) <= 0) return null
-    const date = new Date(Math.floor(Number(seconds)) * 1000)
+    const normalizedSeconds = this.normalizeTimestampSeconds(seconds)
+    if (normalizedSeconds <= 0) return null
+    const date = new Date(normalizedSeconds * 1000)
     if (Number.isNaN(date.getTime())) return null
     const y = date.getFullYear()
     const m = `${date.getMonth() + 1}`.padStart(2, '0')
@@ -956,10 +982,7 @@ class ExportService {
   }
 
   private isUnboundedDateRange(dateRange?: { start: number; end: number } | null): boolean {
-    if (!dateRange) return true
-    const start = Number.isFinite(dateRange.start) ? dateRange.start : 0
-    const end = Number.isFinite(dateRange.end) ? dateRange.end : 0
-    return start <= 0 && end <= 0
+    return this.normalizeExportDateRange(dateRange) === null
   }
 
   private shouldUseFastTextCollection(options: ExportOptions): boolean {
@@ -1114,6 +1137,135 @@ class ExportService {
     return { mode }
   }
 
+  private resolveFastMediaStreamType(
+    collectMode: MessageCollectMode,
+    targetMediaTypes: Set<number> | null
+  ): 'image' | 'video' | null {
+    if (collectMode !== 'media-fast' || !targetMediaTypes || targetMediaTypes.size !== 1) return null
+    if (targetMediaTypes.has(3)) return 'image'
+    if (targetMediaTypes.has(43)) return 'video'
+    return null
+  }
+
+  private async collectMessagesByFastMediaStream(
+    sessionId: string,
+    cleanedMyWxid: string,
+    normalizedDateRange: { start: number; end: number } | null,
+    useCursorTimeRange: boolean,
+    normalizedSenderUsernameFilter: string,
+    mediaType: 'image' | 'video',
+    onCollectProgress?: (payload: { fetched: number }) => void,
+    control?: ExportTaskControl
+  ): Promise<{
+    success: boolean
+    rows: any[]
+    senderUsernames: string[]
+    firstTime: number | null
+    lastTime: number | null
+    error?: string
+  }> {
+    const rows: any[] = []
+    const senderSet = new Set<string>()
+    let firstTime: number | null = null
+    let lastTime: number | null = null
+    let offset = 0
+    let hasMore = true
+    const PAGE_LIMIT = 480
+
+    while (hasMore) {
+      this.throwIfStopRequested(control)
+      const streamResult = await wcdbService.getMediaStream({
+        sessionId,
+        mediaType,
+        beginTimestamp: useCursorTimeRange ? (normalizedDateRange?.start || 0) : 0,
+        endTimestamp: useCursorTimeRange ? (normalizedDateRange?.end || 0) : 0,
+        limit: PAGE_LIMIT,
+        offset
+      })
+      if (!streamResult.success) {
+        return {
+          success: false,
+          rows,
+          senderUsernames: Array.from(senderSet),
+          firstTime,
+          lastTime,
+          error: streamResult.error || '媒体快速流读取失败'
+        }
+      }
+
+      const items = Array.isArray(streamResult.items) ? streamResult.items : []
+      if (items.length === 0) {
+        hasMore = false
+        break
+      }
+
+      for (const item of items) {
+        const createTime = this.normalizeRowTimestampSeconds(item?.createTime)
+        if (normalizedDateRange) {
+          if (createTime > 0 && normalizedDateRange.start > 0 && createTime < normalizedDateRange.start) continue
+          if (createTime > 0 && normalizedDateRange.end > 0 && createTime > normalizedDateRange.end) continue
+        }
+
+        const localTypeRaw = Number(item?.localType || 0)
+        let localType = Number.isFinite(localTypeRaw) ? Math.floor(localTypeRaw) : 0
+        if (localType <= 0) {
+          localType = mediaType === 'video' ? 43 : 3
+        }
+        const isSend = Number(item?.isSend) === 1
+        const senderUsernameRaw = String(item?.senderUsername || '').trim()
+        const actualSender = isSend ? cleanedMyWxid : (senderUsernameRaw || sessionId)
+        if (normalizedSenderUsernameFilter && !this.isSameWxid(actualSender, normalizedSenderUsernameFilter)) {
+          continue
+        }
+        senderSet.add(actualSender)
+
+        const localIdRaw = Number(item?.localId || 0)
+        const localId = Number.isFinite(localIdRaw) ? Math.floor(localIdRaw) : 0
+        const serverIdRawToken = this.normalizeUnsignedIntToken(item?.serverId)
+        const serverIdValue = Number.parseInt(serverIdRawToken, 10)
+
+        const imageMd5 = String(item?.imageMd5 || '').trim().toLowerCase()
+        const imageDatName = String(item?.imageDatName || '').trim().toLowerCase()
+        const videoMd5 = String(item?.videoMd5 || '').trim().toLowerCase()
+
+        rows.push({
+          localId,
+          serverId: Number.isFinite(serverIdValue) ? serverIdValue : 0,
+          serverIdRaw: serverIdRawToken !== '0' ? serverIdRawToken : undefined,
+          createTime,
+          localType,
+          content: String(item?.content || ''),
+          senderUsername: actualSender,
+          isSend,
+          imageMd5: imageMd5 || undefined,
+          imageDatName: imageDatName || undefined,
+          videoMd5: videoMd5 || undefined
+        })
+
+        if (createTime > 0) {
+          if (firstTime === null || createTime < firstTime) firstTime = createTime
+          if (lastTime === null || createTime > lastTime) lastTime = createTime
+        }
+      }
+
+      onCollectProgress?.({ fetched: rows.length })
+      const nextOffset = Number(streamResult.nextOffset)
+      const safeNextOffset = Number.isFinite(nextOffset) && nextOffset > offset
+        ? Math.floor(nextOffset)
+        : offset + items.length
+      offset = safeNextOffset
+      hasMore = Boolean(streamResult.hasMore) && items.length > 0
+    }
+
+    return {
+      success: true,
+      rows,
+      senderUsernames: Array.from(senderSet),
+      firstTime,
+      lastTime
+    }
+  }
+
   private createCollectProgressReporter(
     sessionName: string,
     onProgress?: (progress: ExportProgress) => void,
@@ -1180,6 +1332,106 @@ class ExportService {
       if (Number.isFinite(parsed)) return parsed
     }
     return fallback
+  }
+
+  private parseDateTimeTextToSeconds(value: string): number {
+    const raw = String(value || '').trim()
+    if (!raw) return 0
+    const compactDigits = this.parseCompactDateTimeDigitsToSeconds(raw)
+    if (compactDigits > 0) return compactDigits
+
+    // 优先处理带时区信息的格式（例如 2026-04-22T21:33:12Z / +08:00）
+    if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw)) {
+      const parsed = Date.parse(raw)
+      const seconds = Math.floor(parsed / 1000)
+      if (Number.isFinite(seconds) && seconds > 0) return seconds
+    }
+
+    const normalized = raw.replace('T', ' ').replace(/\.\d+$/, '').replace(/\//g, '-')
+    const match = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ ](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/)
+    if (!match) return 0
+    const year = Number.parseInt(match[1], 10)
+    const month = Number.parseInt(match[2], 10)
+    const day = Number.parseInt(match[3], 10)
+    const hour = Number.parseInt(match[4] || '0', 10)
+    const minute = Number.parseInt(match[5] || '0', 10)
+    const second = Number.parseInt(match[6] || '0', 10)
+    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return 0
+    const dt = new Date(year, month - 1, day, hour, minute, second)
+    const ts = Math.floor(dt.getTime() / 1000)
+    return Number.isFinite(ts) && ts > 0 ? ts : 0
+  }
+
+  private parseCompactDateTimeDigitsToSeconds(value: string): number {
+    const raw = String(value || '').trim()
+    if (!/^\d{8}(?:\d{4}(?:\d{2})?)?$/.test(raw)) return 0
+
+    const year = Number.parseInt(raw.slice(0, 4), 10)
+    const month = Number.parseInt(raw.slice(4, 6), 10)
+    const day = Number.parseInt(raw.slice(6, 8), 10)
+    const hour = raw.length >= 12 ? Number.parseInt(raw.slice(8, 10), 10) : 0
+    const minute = raw.length >= 12 ? Number.parseInt(raw.slice(10, 12), 10) : 0
+    const second = raw.length >= 14 ? Number.parseInt(raw.slice(12, 14), 10) : 0
+
+    if (!Number.isFinite(year) || year < 1990 || year > 2200) return 0
+    if (!Number.isFinite(month) || month < 1 || month > 12) return 0
+    if (!Number.isFinite(day) || day < 1 || day > 31) return 0
+    if (!Number.isFinite(hour) || hour < 0 || hour > 23) return 0
+    if (!Number.isFinite(minute) || minute < 0 || minute > 59) return 0
+    if (!Number.isFinite(second) || second < 0 || second > 59) return 0
+
+    const dt = new Date(year, month - 1, day, hour, minute, second)
+    if (
+      dt.getFullYear() !== year ||
+      dt.getMonth() !== month - 1 ||
+      dt.getDate() !== day ||
+      dt.getHours() !== hour ||
+      dt.getMinutes() !== minute ||
+      dt.getSeconds() !== second
+    ) {
+      return 0
+    }
+
+    const ts = Math.floor(dt.getTime() / 1000)
+    return Number.isFinite(ts) && ts > 0 ? ts : 0
+  }
+
+  private normalizeRowTimestampSeconds(value: unknown): number {
+    if (value === undefined || value === null || value === '') return 0
+    const rawText = String(value || '').trim()
+    if (!rawText) return 0
+
+    // 纯数字且看起来是年月日时间串时，优先按日期解析，避免误当作毫秒。
+    const compactDigits = this.parseCompactDateTimeDigitsToSeconds(rawText)
+    if (compactDigits > 0) return compactDigits
+
+    const numeric = Number(rawText)
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return this.normalizeTimestampSeconds(numeric)
+    }
+
+    return this.parseDateTimeTextToSeconds(rawText)
+  }
+
+  private getTimestampSecondsFromRow(row: Record<string, any>): number {
+    const rawPrimary = this.getRowField(row, [
+      'create_time', 'createTime', 'createtime',
+      'msg_create_time', 'msgCreateTime',
+      'msg_time', 'msgTime', 'time',
+      'WCDB_CT_create_time'
+    ])
+    let primary = this.normalizeRowTimestampSeconds(rawPrimary)
+
+    const rawSortSeq = this.getRowField(row, ['sort_seq', 'sortSeq', 'server_seq', 'serverSeq'])
+    const sortSeqSeconds = this.normalizeRowTimestampSeconds(rawSortSeq)
+
+    // 对异常小时间戳兜底（例如 parseInt("2026-...") => 2026），优先回退 sort_seq。
+    if (primary > 0 && primary < 946684800 && sortSeqSeconds > 946684800) {
+      return sortSeqSeconds
+    }
+    if (primary > 0) return primary
+    if (sortSeqSeconds > 0) return sortSeqSeconds
+    return 0
   }
 
   private getRowField(row: Record<string, any>, keys: string[]): any {
@@ -3787,43 +4039,31 @@ class ExportService {
         dirCache?.add(imagesDir)
       }
 
-      // 使用消息对象中已提取的字段
-      const imageMd5 = msg.imageMd5
-      const imageDatName = msg.imageDatName
+      const tryResolveImagePath = async (imageMd5?: string, imageDatName?: string): Promise<string | null> => {
+        if (!imageMd5 && !imageDatName) return null
 
-      if (!imageMd5 && !imageDatName) {
-        return null
-      }
-
-      const missingRunCacheKey = this.getImageMissingRunCacheKey(
-        sessionId,
-        imageMd5,
-        imageDatName
-      )
-      if (missingRunCacheKey && this.mediaRunMissingImageKeys.has(missingRunCacheKey)) {
-        return null
-      }
-
-      const result = await imageDecryptService.decryptImage({
-        sessionId,
-        imageMd5,
-        imageDatName,
-        createTime: msg.createTime,
-        force: true,  // 导出优先高清，失败再回退缩略图
-        preferFilePath: true,
-        hardlinkOnly: true,
-        disableUpdateCheck: true,
-        allowCacheIndex: !imageMd5,
-        suppressEvents: true
-      })
-
-      if (!result.success || !result.localPath) {
-        if (result.failureKind === 'decrypt_failed') {
-          console.log(`[Export] 图片解密失败 (localId=${msg.localId}): imageMd5=${imageMd5}, imageDatName=${imageDatName}, error=${result.error || '未知'}`)
-        } else {
-          console.log(`[Export] 图片本地无数据 (localId=${msg.localId}): imageMd5=${imageMd5}, imageDatName=${imageDatName}, error=${result.error || '未知'}`)
+        const decryptResult = await imageDecryptService.decryptImage({
+          sessionId,
+          imageMd5,
+          imageDatName,
+          createTime: msg.createTime,
+          force: true,  // 导出优先高清，失败再回退缩略图
+          preferFilePath: true,
+          hardlinkOnly: true,
+          disableUpdateCheck: true,
+          allowCacheIndex: !imageMd5,
+          suppressEvents: true
+        })
+        if (decryptResult.success && decryptResult.localPath) {
+          return decryptResult.localPath
         }
-        // 尝试获取缩略图
+
+        if (decryptResult.failureKind === 'decrypt_failed') {
+          console.log(`[Export] 图片解密失败 (localId=${msg.localId}): imageMd5=${imageMd5 || ''}, imageDatName=${imageDatName || ''}, error=${decryptResult.error || '未知'}`)
+        } else {
+          console.log(`[Export] 图片本地无数据 (localId=${msg.localId}): imageMd5=${imageMd5 || ''}, imageDatName=${imageDatName || ''}, error=${decryptResult.error || '未知'}`)
+        }
+
         const thumbResult = await imageDecryptService.resolveCachedImage({
           sessionId,
           imageMd5,
@@ -3836,14 +4076,38 @@ class ExportService {
         })
         if (thumbResult.success && thumbResult.localPath) {
           console.log(`[Export] 使用缩略图替代 (localId=${msg.localId}): ${thumbResult.localPath}`)
-          result.localPath = thumbResult.localPath
-        } else {
-          console.log(`[Export] 缩略图也获取失败，所有方式均失败 → 将显示 [图片] 占位符`)
-          if (missingRunCacheKey) {
-            this.mediaRunMissingImageKeys.add(missingRunCacheKey)
-          }
-          return null
+          return thumbResult.localPath
         }
+        return null
+      }
+
+      // 使用消息对象中已提取的字段，先尝试快速导出。
+      let imageMd5 = String(msg.imageMd5 || '').trim().toLowerCase() || undefined
+      let imageDatName = String(msg.imageDatName || '').trim().toLowerCase() || undefined
+      const initialMissingRunCacheKey = this.getImageMissingRunCacheKey(sessionId, imageMd5, imageDatName)
+      if (initialMissingRunCacheKey && this.mediaRunMissingImageKeys.has(initialMissingRunCacheKey)) {
+        return null
+      }
+      let sourcePath = await tryResolveImagePath(imageMd5, imageDatName)
+
+      // 快速流字段存在偏差时，按 localId 强制回填再重试一次，避免“导出进度前进但写入 0”。
+      if (!sourcePath) {
+        const localId = Number(msg?.localId || 0)
+        if (Number.isFinite(localId) && localId > 0) {
+          await this.backfillMediaFieldsFromMessageDetail(sessionId, [msg], new Set([3]), undefined, { force: true })
+          imageMd5 = String(msg.imageMd5 || '').trim().toLowerCase() || undefined
+          imageDatName = String(msg.imageDatName || '').trim().toLowerCase() || undefined
+          sourcePath = await tryResolveImagePath(imageMd5, imageDatName)
+        }
+      }
+
+      if (!sourcePath) {
+        const missingRunCacheKey = this.getImageMissingRunCacheKey(sessionId, imageMd5, imageDatName)
+        console.log(`[Export] 缩略图也获取失败，所有方式均失败 → 将显示 [图片] 占位符`)
+        if (missingRunCacheKey) {
+          this.mediaRunMissingImageKeys.add(missingRunCacheKey)
+        }
+        return null
       }
 
       // 为每条消息生成稳定且唯一的文件名前缀，避免跨日期/消息发生同名覆盖
@@ -3851,7 +4115,6 @@ class ExportService {
       const imageKey = (imageMd5 || imageDatName || 'image').replace(/[^a-zA-Z0-9_-]/g, '')
 
       // 从 data URL 或 file URL 获取实际路径
-      let sourcePath: string = result.localPath!
       if (sourcePath.startsWith('data:')) {
         // 是 data URL，需要保存为文件
         const base64Data = sourcePath.split(',')[1]
@@ -4121,18 +4384,29 @@ class ExportService {
     includePoster = false
   ): Promise<MediaExportItem | null> {
     try {
-      const videoMd5 = msg.videoMd5
-      if (!videoMd5) return null
+      let videoMd5 = String(msg.videoMd5 || '').trim().toLowerCase()
+      const resolveVideoInfo = async (token: string) => {
+        if (!token) return null
+        const videoInfo = await videoService.getVideoInfo(token, { includePoster })
+        if (!videoInfo.exists || !videoInfo.videoUrl) return null
+        return videoInfo
+      }
+
+      let videoInfo = await resolveVideoInfo(videoMd5)
+      if (!videoInfo) {
+        const localId = Number(msg?.localId || 0)
+        if (Number.isFinite(localId) && localId > 0) {
+          await this.backfillMediaFieldsFromMessageDetail(sessionId, [msg], new Set([43]), undefined, { force: true })
+          videoMd5 = String(msg.videoMd5 || '').trim().toLowerCase()
+          videoInfo = await resolveVideoInfo(videoMd5)
+        }
+      }
+      if (!videoInfo) return null
 
       const videosDir = path.join(mediaRootDir, mediaRelativePrefix, 'videos')
       if (!dirCache?.has(videosDir)) {
         await fs.promises.mkdir(videosDir, { recursive: true })
         dirCache?.add(videosDir)
-      }
-
-      const videoInfo = await videoService.getVideoInfo(videoMd5, { includePoster })
-      if (!videoInfo.exists || !videoInfo.videoUrl) {
-        return null
       }
 
       const sourcePath = videoInfo.videoUrl
@@ -4764,6 +5038,13 @@ class ExportService {
     return this.mediaExportTelemetry?.doneFiles ?? 0
   }
 
+  private formatMediaPhaseLabel(processed: number, total: number, beforeDoneFiles: number): string {
+    const safeProcessed = Math.max(0, Math.floor(processed || 0))
+    const safeTotal = Math.max(0, Math.floor(total || 0))
+    const writtenNow = Math.max(0, this.getMediaDoneFilesCount() - Math.max(0, Math.floor(beforeDoneFiles || 0)))
+    return `导出媒体 ${Math.min(safeProcessed, safeTotal)}/${safeTotal}（已写入 ${writtenNow}）`
+  }
+
   private buildFileOnlyExportFailure(
     options: ExportOptions,
     mediaMessages: any[],
@@ -4834,79 +5115,136 @@ class ExportService {
     collectMode: MessageCollectMode = 'full',
     targetMediaTypes?: Set<number>,
     control?: ExportTaskControl,
-    onCollectProgress?: (payload: { fetched: number }) => void
-  ): Promise<{ rows: any[]; memberSet: Map<string, { member: ChatLabMember; avatarUrl?: string }>; firstTime: number | null; lastTime: number | null }> {
+    onCollectProgress?: (payload: { fetched: number }) => void,
+    allowLiteFallback = true,
+    allowRangeFallback = true,
+    useCursorTimeRange = true,
+    allowModeFallback = true
+  ): Promise<{ rows: any[]; memberSet: Map<string, { member: ChatLabMember; avatarUrl?: string }>; firstTime: number | null; lastTime: number | null; error?: string }> {
     const rows: any[] = []
     const memberSet = new Map<string, { member: ChatLabMember; avatarUrl?: string }>()
     const senderSet = new Set<string>()
     let firstTime: number | null = null
     let lastTime: number | null = null
-    const mediaTypeFilter = collectMode === 'media-fast' && targetMediaTypes && targetMediaTypes.size > 0
+    const mediaTypeFilter = targetMediaTypes && targetMediaTypes.size > 0
       ? targetMediaTypes
       : null
     const fileOnlyMediaFilter = this.isFileOnlyMediaFilter(mediaTypeFilter)
 
-    // 修复时间范围：0 表示不限制，而不是时间戳 0
-    const beginTime = dateRange?.start || 0
-    const endTime = dateRange?.end && dateRange.end > 0 ? dateRange.end : 0
+    const normalizedDateRange = this.normalizeExportDateRange(dateRange)
+    const normalizedSenderUsernameFilter = String(senderUsernameFilter || '').trim()
+    const beginTime = useCursorTimeRange ? (normalizedDateRange?.start || 0) : 0
+    const endTime = useCursorTimeRange ? (normalizedDateRange?.end || 0) : 0
     
     const batchSize = (collectMode === 'text-fast' || collectMode === 'media-fast') ? 2000 : 500
     this.throwIfStopRequested(control)
-    const cursor = collectMode === 'media-fast'
-      ? await wcdbService.openMessageCursorLite(
+    const fastMediaType = this.resolveFastMediaStreamType(collectMode, mediaTypeFilter)
+    let usedFastMediaStream = false
+    let usedLiteCursor = false
+    if (fastMediaType) {
+      const streamCollected = await this.collectMessagesByFastMediaStream(
         sessionId,
-        batchSize,
-        true,
-        beginTime,
-        endTime
+        cleanedMyWxid,
+        normalizedDateRange,
+        useCursorTimeRange,
+        normalizedSenderUsernameFilter,
+        fastMediaType,
+        onCollectProgress,
+        control
       )
-      : await wcdbService.openMessageCursor(
-        sessionId,
-        batchSize,
-        true,
-        beginTime,
-        endTime
-      )
-    if (!cursor.success || !cursor.cursor) {
-      console.error(`[Export] 打开游标失败: ${cursor.error || '未知错误'}`)
-      return { rows, memberSet, firstTime, lastTime }
+      if (streamCollected.success) {
+        usedFastMediaStream = true
+        rows.push(...streamCollected.rows)
+        for (const username of streamCollected.senderUsernames) {
+          senderSet.add(username)
+        }
+        firstTime = streamCollected.firstTime
+        lastTime = streamCollected.lastTime
+      } else {
+        console.warn(`[Export] 媒体快速流读取失败，回退游标链路: session=${sessionId}, type=${fastMediaType}, error=${streamCollected.error || 'unknown'}`)
+      }
     }
 
-    try {
-      let hasMore = true
-      let batchCount = 0
-      while (hasMore) {
-        this.throwIfStopRequested(control)
-        const batch = await wcdbService.fetchMessageBatch(cursor.cursor)
-        batchCount++
-        
-        if (!batch.success) {
-          console.error(`[Export] 获取批次 ${batchCount} 失败: ${batch.error}`)
-          break
+    if (!usedFastMediaStream) {
+      // 媒体导出链路必须优先保证字段完整性，否则会出现“进度前进但无文件写出”。
+      // 轻量游标仅用于文本快路径；媒体快路径保留标准游标。
+      usedLiteCursor = allowLiteFallback && collectMode === 'text-fast'
+      let cursor = usedLiteCursor
+        ? await wcdbService.openMessageCursorLite(
+          sessionId,
+          batchSize,
+          true,
+          beginTime,
+          endTime
+        )
+        : await wcdbService.openMessageCursor(
+          sessionId,
+          batchSize,
+          true,
+          beginTime,
+          endTime
+        )
+      if (!cursor.success || !cursor.cursor) {
+        if (usedLiteCursor && allowLiteFallback) {
+          console.warn(`[Export] 轻量游标打开失败，回退标准游标重试: ${cursor.error || '未知错误'}`)
+          return this.collectMessages(
+            sessionId,
+            cleanedMyWxid,
+            normalizedDateRange,
+            senderUsernameFilter,
+            collectMode,
+            targetMediaTypes,
+            control,
+            onCollectProgress,
+            false,
+            allowRangeFallback,
+            useCursorTimeRange,
+            allowModeFallback
+          )
         }
-        
-        if (!batch.rows) break
-        
-        let rowIndex = 0
-        for (const row of batch.rows) {
+        console.error(`[Export] 打开游标失败: ${cursor.error || '未知错误'}`)
+        return {
+          rows,
+          memberSet,
+          firstTime,
+          lastTime,
+          error: cursor.error || '打开消息游标失败'
+        }
+      }
+
+      try {
+        let hasMore = true
+        let batchCount = 0
+        while (hasMore) {
+          this.throwIfStopRequested(control)
+          const batch = await wcdbService.fetchMessageBatch(cursor.cursor)
+          batchCount++
+          
+          if (!batch.success) {
+            console.error(`[Export] 获取批次 ${batchCount} 失败: ${batch.error}`)
+            break
+          }
+          
+          if (!batch.rows) break
+          
+          let rowIndex = 0
+          for (const row of batch.rows) {
           if ((rowIndex++ & 0x7f) === 0) {
             this.throwIfStopRequested(control)
           }
-          const createTime = this.getIntFromRow(row, [
-            'create_time', 'createTime', 'createtime',
-            'msg_create_time', 'msgCreateTime',
-            'msg_time', 'msgTime', 'time',
-            'WCDB_CT_create_time'
-          ], 0)
-          if (dateRange) {
-            if (createTime < dateRange.start || createTime > dateRange.end) continue
+          const createTime = this.getTimestampSecondsFromRow(row)
+          if (normalizedDateRange) {
+            if (createTime > 0 && normalizedDateRange.start > 0 && createTime < normalizedDateRange.start) continue
+            if (createTime > 0 && normalizedDateRange.end > 0 && createTime > normalizedDateRange.end) continue
           }
 
           const localType = this.getIntFromRow(row, [
             'local_type', 'localType', 'type', 'msg_type', 'msgType', 'WCDB_CT_local_type'
           ], 1)
-          const rowFileHints = this.getFileAppMessageHints(row)
-          const allowFileProbe = fileOnlyMediaFilter && this.hasFileAppMessageHints(row)
+          const rowFileHints = collectMode === 'text-fast'
+            ? {}
+            : this.getFileAppMessageHints(row)
+          const allowFileProbe = collectMode !== 'text-fast' && fileOnlyMediaFilter && this.hasFileAppMessageHints(row)
           if (mediaTypeFilter && !mediaTypeFilter.has(localType) && !allowFileProbe) {
             continue
           }
@@ -4964,10 +5302,26 @@ class ExportService {
             actualSender = isSend ? cleanedMyWxid : (senderUsername || sessionId)
           }
 
-          if (senderUsernameFilter && !this.isSameWxid(actualSender, senderUsernameFilter)) {
+          if (normalizedSenderUsernameFilter && !this.isSameWxid(actualSender, normalizedSenderUsernameFilter)) {
             continue
           }
           senderSet.add(actualSender)
+
+          if (collectMode === 'text-fast') {
+            rows.push({
+              localId,
+              serverId,
+              serverIdRaw: serverIdRaw !== '0' ? serverIdRaw : undefined,
+              createTime,
+              localType,
+              content,
+              senderUsername: actualSender,
+              isSend
+            })
+            if (firstTime === null || createTime < firstTime) firstTime = createTime
+            if (lastTime === null || createTime > lastTime) lastTime = createTime
+            continue
+          }
 
           // 提取媒体相关字段（轻量模式下跳过）
           let imageMd5: string | undefined
@@ -5083,20 +5437,75 @@ class ExportService {
 
           if (firstTime === null || createTime < firstTime) firstTime = createTime
           if (lastTime === null || createTime > lastTime) lastTime = createTime
+          }
+          onCollectProgress?.({ fetched: rows.length })
+          hasMore = batch.hasMore === true
         }
-        onCollectProgress?.({ fetched: rows.length })
-        hasMore = batch.hasMore === true
-      }
-      
-    } catch (err) {
-      if (this.isStopError(err)) throw err
-      console.error(`[Export] 收集消息异常:`, err)
-    } finally {
-      try {
-        await wcdbService.closeMessageCursor(cursor.cursor)
+        
       } catch (err) {
-        console.error(`[Export] 关闭游标失败:`, err)
+        if (this.isStopError(err)) throw err
+        console.error(`[Export] 收集消息异常:`, err)
+      } finally {
+        try {
+          await wcdbService.closeMessageCursor(cursor.cursor)
+        } catch (err) {
+          console.error(`[Export] 关闭游标失败:`, err)
+        }
       }
+    }
+
+    if (rows.length === 0 && usedLiteCursor && allowLiteFallback) {
+      console.warn(`[Export] 轻量游标返回 0 条，回退标准游标重试: session=${sessionId}, range=${beginTime}-${endTime}`)
+      return this.collectMessages(
+        sessionId,
+        cleanedMyWxid,
+        normalizedDateRange,
+        senderUsernameFilter,
+        collectMode,
+        targetMediaTypes,
+        control,
+        onCollectProgress,
+        false,
+        allowRangeFallback,
+        useCursorTimeRange,
+        allowModeFallback
+      )
+    }
+
+    if (rows.length === 0 && collectMode === 'media-fast' && allowModeFallback) {
+      console.warn(`[Export] media-fast 返回 0 条，回退 full 模式重试: session=${sessionId}`)
+      return this.collectMessages(
+        sessionId,
+        cleanedMyWxid,
+        normalizedDateRange,
+        senderUsernameFilter,
+        'full',
+        mediaTypeFilter || undefined,
+        control,
+        onCollectProgress,
+        false,
+        allowRangeFallback,
+        useCursorTimeRange,
+        false
+      )
+    }
+
+    if (rows.length === 0 && allowRangeFallback && normalizedDateRange && useCursorTimeRange) {
+      console.warn(`[Export] 时间范围游标返回 0 条，回退为全量游标+本地过滤重试: session=${sessionId}, range=${normalizedDateRange.start}-${normalizedDateRange.end}`)
+      return this.collectMessages(
+        sessionId,
+        cleanedMyWxid,
+        normalizedDateRange,
+        senderUsernameFilter,
+        collectMode,
+        targetMediaTypes,
+        control,
+        onCollectProgress,
+        allowLiteFallback,
+        false,
+        false,
+        allowModeFallback
+      )
     }
 
     this.throwIfStopRequested(control)
@@ -5136,10 +5545,15 @@ class ExportService {
     sessionId: string,
     rows: any[],
     targetMediaTypes: Set<number>,
-    control?: ExportTaskControl
+    control?: ExportTaskControl,
+    options?: { force?: boolean }
   ): Promise<void> {
+    const force = options?.force === true
     const fileOnlyMediaFilter = this.isFileOnlyMediaFilter(targetMediaTypes)
     const needsBackfill = rows.filter((msg) => {
+      if (force) {
+        return Number(msg?.localId || 0) > 0
+      }
       const isFileCandidate = this.isFileAppLocalType(Number(msg.localType || 0)) || (fileOnlyMediaFilter && this.hasFileAppMessageHints(msg))
       if (isFileCandidate) {
         return !msg.xmlType || !msg.fileName || !msg.fileMd5 || !msg.fileSize || !msg.fileExt
@@ -5175,8 +5589,8 @@ class ExportService {
         const supplementalPayload = `${this.decodeMaybeCompressed(String(packedInfoRaw || ''))}\n${this.decodeMaybeCompressed(String(reserved0Raw || ''))}`
 
         if (msg.localType === 3) {
-          const imageMd5 = String(row.image_md5 || row.imageMd5 || '').trim() || this.extractImageMd5(content)
-          const imageDatName = String(row.image_dat_name || row.imageDatName || '').trim() || this.extractImageDatName(content)
+          const imageMd5 = (String(row.image_md5 || row.imageMd5 || '').trim() || this.extractImageMd5(content) || '').toLowerCase()
+          const imageDatName = (String(row.image_dat_name || row.imageDatName || '').trim() || this.extractImageDatName(content) || '').toLowerCase()
           if (imageMd5) msg.imageMd5 = imageMd5
           if (imageDatName) msg.imageDatName = imageDatName
           return
@@ -5198,7 +5612,7 @@ class ExportService {
         }
 
         if (msg.localType === 43) {
-          const videoMd5 = this.extractVideoFileNameFromRow(row, content)
+          const videoMd5 = String(this.extractVideoFileNameFromRow(row, content) || '').trim().toLowerCase()
           if (videoMd5) msg.videoMd5 = videoMd5
           return
         }
@@ -5686,7 +6100,7 @@ class ExportService {
 
       // 如果没有消息,不创建文件
       if (totalMessages === 0) {
-        return { success: false, error: '该会话在指定时间范围内没有消息' }
+        return { success: false, error: collected.error || '该会话在指定时间范围内没有消息' }
       }
 
       await this.hydrateEmojiCaptionsForMessages(sessionId, allMessages, control)
@@ -5739,12 +6153,12 @@ class ExportService {
         }
       }
 
-      allMessages.sort((a, b) => a.createTime - b.createTime)
+      const allMessagesInCursorOrder = allMessages
 
       const { exportMediaEnabled, mediaRootDir, mediaRelativePrefix } = this.getMediaLayout(outputPath, options)
 
       // ========== 阶段1：并行导出媒体文件 ==========
-      const mediaMessages = this.collectMediaMessagesForExport(allMessages, options)
+      const mediaMessages = this.collectMediaMessagesForExport(allMessagesInCursorOrder, options)
 
       const mediaCache = new Map<string, MediaExportItem | null>()
       const mediaDirCache = new Set<string>()
@@ -5767,7 +6181,7 @@ class ExportService {
           phase: 'exporting-media',
           phaseProgress: 0,
           phaseTotal: mediaMessages.length,
-          phaseLabel: `导出媒体 0/${mediaMessages.length}`,
+          phaseLabel: this.formatMediaPhaseLabel(0, mediaMessages.length, beforeMediaDoneFiles),
           ...this.getMediaTelemetrySnapshot(),
           estimatedTotalMessages: totalMessages
         })
@@ -5801,7 +6215,7 @@ class ExportService {
               phase: 'exporting-media',
               phaseProgress: mediaExported,
               phaseTotal: mediaMessages.length,
-              phaseLabel: `导出媒体 ${mediaExported}/${mediaMessages.length}`,
+              phaseLabel: this.formatMediaPhaseLabel(mediaExported, mediaMessages.length, beforeMediaDoneFiles),
               ...this.getMediaTelemetrySnapshot()
             })
           }
@@ -6218,7 +6632,7 @@ class ExportService {
 
       // 如果没有消息,不创建文件
       if (totalMessages === 0) {
-        return { success: false, error: '该会话在指定时间范围内没有消息' }
+        return { success: false, error: collected.error || '该会话在指定时间范围内没有消息' }
       }
 
       await this.hydrateEmojiCaptionsForMessages(sessionId, collected.rows, control)
@@ -6272,7 +6686,7 @@ class ExportService {
           phase: 'exporting-media',
           phaseProgress: 0,
           phaseTotal: mediaMessages.length,
-          phaseLabel: `导出媒体 0/${mediaMessages.length}`,
+          phaseLabel: this.formatMediaPhaseLabel(0, mediaMessages.length, beforeMediaDoneFiles),
           ...this.getMediaTelemetrySnapshot(),
           estimatedTotalMessages: totalMessages
         })
@@ -6305,7 +6719,7 @@ class ExportService {
               phase: 'exporting-media',
               phaseProgress: mediaExported,
               phaseTotal: mediaMessages.length,
-              phaseLabel: `导出媒体 ${mediaExported}/${mediaMessages.length}`,
+              phaseLabel: this.formatMediaPhaseLabel(mediaExported, mediaMessages.length, beforeMediaDoneFiles),
               ...this.getMediaTelemetrySnapshot()
             })
           }
@@ -6948,7 +7362,7 @@ class ExportService {
 
       // 如果没有消息,不创建文件
       if (totalMessages === 0) {
-        return { success: false, error: '该会话在指定时间范围内没有消息' }
+        return { success: false, error: collected.error || '该会话在指定时间范围内没有消息' }
       }
 
       await this.hydrateEmojiCaptionsForMessages(sessionId, collected.rows, control)
@@ -7108,7 +7522,7 @@ class ExportService {
 
 
       // 填充数据
-      const sortedMessages = collected.rows.sort((a, b) => a.createTime - b.createTime)
+      const sortedMessages = collected.rows
 
       // 媒体导出设置
       const { exportMediaEnabled, mediaRootDir, mediaRelativePrefix } = this.getMediaLayout(outputPath, options)
@@ -7137,7 +7551,7 @@ class ExportService {
           phase: 'exporting-media',
           phaseProgress: 0,
           phaseTotal: mediaMessages.length,
-          phaseLabel: `导出媒体 0/${mediaMessages.length}`,
+          phaseLabel: this.formatMediaPhaseLabel(0, mediaMessages.length, beforeMediaDoneFiles),
           ...this.getMediaTelemetrySnapshot(),
           estimatedTotalMessages: totalMessages
         })
@@ -7170,7 +7584,7 @@ class ExportService {
               phase: 'exporting-media',
               phaseProgress: mediaExported,
               phaseTotal: mediaMessages.length,
-              phaseLabel: `导出媒体 ${mediaExported}/${mediaMessages.length}`,
+              phaseLabel: this.formatMediaPhaseLabel(mediaExported, mediaMessages.length, beforeMediaDoneFiles),
               ...this.getMediaTelemetrySnapshot()
             })
           }
@@ -7818,7 +8232,7 @@ class ExportService {
 
       // 如果没有消息,不创建文件
       if (totalMessages === 0) {
-        return { success: false, error: '该会话在指定时间范围内没有消息' }
+        return { success: false, error: collected.error || '该会话在指定时间范围内没有消息' }
       }
 
       await this.hydrateEmojiCaptionsForMessages(sessionId, collected.rows, control)
@@ -7855,7 +8269,7 @@ class ExportService {
         ? await this.getGroupNicknamesForRoom(sessionId, groupNicknameCandidates)
         : new Map<string, string>()
 
-      const sortedMessages = collected.rows.sort((a, b) => a.createTime - b.createTime)
+      const sortedMessages = collected.rows
 
       const { exportMediaEnabled, mediaRootDir, mediaRelativePrefix } = this.getMediaLayout(outputPath, options)
       const mediaMessages = this.collectMediaMessagesForExport(sortedMessages, options)
@@ -7881,7 +8295,7 @@ class ExportService {
           phase: 'exporting-media',
           phaseProgress: 0,
           phaseTotal: mediaMessages.length,
-          phaseLabel: `导出媒体 0/${mediaMessages.length}`,
+          phaseLabel: this.formatMediaPhaseLabel(0, mediaMessages.length, beforeMediaDoneFiles),
           ...this.getMediaTelemetrySnapshot(),
           estimatedTotalMessages: totalMessages
         })
@@ -7914,7 +8328,7 @@ class ExportService {
               phase: 'exporting-media',
               phaseProgress: mediaExported,
               phaseTotal: mediaMessages.length,
-              phaseLabel: `导出媒体 ${mediaExported}/${mediaMessages.length}`,
+              phaseLabel: this.formatMediaPhaseLabel(mediaExported, mediaMessages.length, beforeMediaDoneFiles),
               ...this.getMediaTelemetrySnapshot()
             })
           }
@@ -7968,7 +8382,24 @@ class ExportService {
         exportedMessages: 0
       })
 
-      const lines: string[] = []
+      const stream = fs.createWriteStream(outputPath, { encoding: 'utf-8' })
+      const writeChunk = async (chunk: string): Promise<void> => {
+        await new Promise<void>((resolve, _reject) => {
+          this.throwIfStopRequested(control)
+          if (!stream.write(chunk)) {
+            stream.once('drain', resolve)
+          } else {
+            resolve()
+          }
+        })
+      }
+      const WRITE_BATCH = 120
+      let writeBuffer: string[] = []
+      const flushWriteBuffer = async (): Promise<void> => {
+        if (writeBuffer.length === 0) return
+        await writeChunk(writeBuffer.join(''))
+        writeBuffer = []
+      }
       const senderProfileCache = new Map<string, ExportDisplayProfile>()
 
       for (let i = 0; i < totalMessages; i++) {
@@ -8083,9 +8514,10 @@ class ExportService {
           }
         }
 
-        lines.push(`${this.formatTimestamp(msg.createTime)} '${senderRole}'`)
-        lines.push(enrichedContentValue)
-        lines.push('')
+        writeBuffer.push(`${this.formatTimestamp(msg.createTime)} '${senderRole}'\n${enrichedContentValue}\n\n`)
+        if (writeBuffer.length >= WRITE_BATCH) {
+          await flushWriteBuffer()
+        }
 
         if ((i + 1) % 200 === 0) {
           const progress = 60 + Math.floor((i + 1) / sortedMessages.length * 30)
@@ -8101,6 +8533,8 @@ class ExportService {
         }
       }
 
+      await flushWriteBuffer()
+
       onProgress?.({
         current: 92,
         total: 100,
@@ -8112,7 +8546,10 @@ class ExportService {
       })
 
       this.throwIfStopRequested(control)
-      await fs.promises.writeFile(outputPath, lines.join('\n'), 'utf-8')
+      await new Promise<void>((resolve, reject) => {
+        stream.on('error', reject)
+        stream.end(() => resolve())
+      })
 
       onProgress?.({
         current: 100,
@@ -8186,7 +8623,7 @@ class ExportService {
       )
       let totalMessages = collected.rows.length
       if (totalMessages === 0) {
-        return { success: false, error: '该会话在指定时间范围内没有消息' }
+        return { success: false, error: collected.error || '该会话在指定时间范围内没有消息' }
       }
 
       await this.hydrateEmojiCaptionsForMessages(sessionId, collected.rows, control)
@@ -8215,7 +8652,6 @@ class ExportService {
         : new Map<string, string>()
 
       const sortedMessages = collected.rows
-        .sort((a, b) => a.createTime - b.createTime)
         .filter((msg) => !this.isQuotedReplyMessage(msg.localType, msg.content || ''))
       totalMessages = sortedMessages.length
       if (totalMessages === 0) {
@@ -8254,7 +8690,7 @@ class ExportService {
           phase: 'exporting-media',
           phaseProgress: 0,
           phaseTotal: mediaMessages.length,
-          phaseLabel: `导出媒体 0/${mediaMessages.length}`,
+          phaseLabel: this.formatMediaPhaseLabel(0, mediaMessages.length, beforeMediaDoneFiles),
           ...this.getMediaTelemetrySnapshot(),
           estimatedTotalMessages: totalMessages
         })
@@ -8287,7 +8723,7 @@ class ExportService {
               phase: 'exporting-media',
               phaseProgress: mediaExported,
               phaseTotal: mediaMessages.length,
-              phaseLabel: `导出媒体 ${mediaExported}/${mediaMessages.length}`,
+              phaseLabel: this.formatMediaPhaseLabel(mediaExported, mediaMessages.length, beforeMediaDoneFiles),
               ...this.getMediaTelemetrySnapshot()
             })
           }
@@ -8341,8 +8777,25 @@ class ExportService {
         exportedMessages: 0
       })
 
-      const lines: string[] = []
-      lines.push('id,MsgSvrID,type_name,is_sender,talker,msg,src,CreateTime')
+      const stream = fs.createWriteStream(outputPath, { encoding: 'utf-8' })
+      const writeChunk = async (chunk: string): Promise<void> => {
+        await new Promise<void>((resolve, _reject) => {
+          this.throwIfStopRequested(control)
+          if (!stream.write(chunk)) {
+            stream.once('drain', resolve)
+          } else {
+            resolve()
+          }
+        })
+      }
+      const WRITE_BATCH = 160
+      let writeBuffer: string[] = []
+      const flushWriteBuffer = async (): Promise<void> => {
+        if (writeBuffer.length === 0) return
+        await writeChunk(writeBuffer.join(''))
+        writeBuffer = []
+      }
+      await writeChunk('\uFEFFid,MsgSvrID,type_name,is_sender,talker,msg,src,CreateTime\r\n')
       const senderProfileCache = new Map<string, ExportDisplayProfile>()
 
       for (let i = 0; i < totalMessages; i++) {
@@ -8423,7 +8876,10 @@ class ExportService {
           this.formatIsoTimestamp(msg.createTime)
         ]
 
-        lines.push(row.map((value) => this.escapeCsvCell(value)).join(','))
+        writeBuffer.push(`${row.map((value) => this.escapeCsvCell(value)).join(',')}\r\n`)
+        if (writeBuffer.length >= WRITE_BATCH) {
+          await flushWriteBuffer()
+        }
 
         if ((i + 1) % 200 === 0) {
           const progress = 60 + Math.floor((i + 1) / sortedMessages.length * 30)
@@ -8439,6 +8895,8 @@ class ExportService {
         }
       }
 
+      await flushWriteBuffer()
+
       onProgress?.({
         current: 92,
         total: 100,
@@ -8450,7 +8908,10 @@ class ExportService {
       })
 
       this.throwIfStopRequested(control)
-      await fs.promises.writeFile(outputPath, `\uFEFF${lines.join('\r\n')}`, 'utf-8')
+      await new Promise<void>((resolve, reject) => {
+        stream.on('error', reject)
+        stream.end(() => resolve())
+      })
 
       onProgress?.({
         current: 100,
@@ -8612,7 +9073,7 @@ class ExportService {
 
       // 如果没有消息,不创建文件
       if (collected.rows.length === 0) {
-        return { success: false, error: '该会话在指定时间范围内没有消息' }
+        return { success: false, error: collected.error || '该会话在指定时间范围内没有消息' }
       }
       const totalMessages = collected.rows.length
 
@@ -8645,7 +9106,7 @@ class ExportService {
         this.throwIfStopRequested(control)
         await this.mergeGroupMembers(sessionId, collected.memberSet, options.exportAvatars === true)
       }
-      const sortedMessages = collected.rows.sort((a, b) => a.createTime - b.createTime)
+      const sortedMessages = collected.rows
 
       const { exportMediaEnabled, mediaRootDir, mediaRelativePrefix } = this.getMediaLayout(outputPath, options)
       const mediaMessages = this.collectMediaMessagesForExport(sortedMessages, options)
@@ -8671,7 +9132,7 @@ class ExportService {
           phase: 'exporting-media',
           phaseProgress: 0,
           phaseTotal: mediaMessages.length,
-          phaseLabel: `导出媒体 0/${mediaMessages.length}`,
+          phaseLabel: this.formatMediaPhaseLabel(0, mediaMessages.length, beforeMediaDoneFiles),
           ...this.getMediaTelemetrySnapshot(),
           estimatedTotalMessages: totalMessages
         })
@@ -8705,7 +9166,7 @@ class ExportService {
               phase: 'exporting-media',
               phaseProgress: mediaExported,
               phaseTotal: mediaMessages.length,
-              phaseLabel: `导出媒体 ${mediaExported}/${mediaMessages.length}`,
+              phaseLabel: this.formatMediaPhaseLabel(mediaExported, mediaMessages.length, beforeMediaDoneFiles),
               ...this.getMediaTelemetrySnapshot()
             })
           }

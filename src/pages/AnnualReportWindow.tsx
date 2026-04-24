@@ -93,7 +93,7 @@ const DecodeText = ({
         if (i < iter) return strVal[i]
         return chars[Math.floor(Math.random() * chars.length)]
       }).join(''))
-      
+
       if (iter >= strVal.length) {
         clearInterval(inv)
         setDisplay(strVal)
@@ -123,7 +123,7 @@ function AnnualReportWindow() {
   const s3LayoutRef = useRef<HTMLDivElement | null>(null)
   const s3ListRef = useRef<HTMLDivElement | null>(null)
   const [s3LineVars, setS3LineVars] = useState<React.CSSProperties>({})
-  
+
   // 提取长图逻辑变量
   const [buttonText, setButtonText] = useState('EXTRACT RECORD')
   const [isExtracting, setIsExtracting] = useState(false)
@@ -202,7 +202,7 @@ function AnnualReportWindow() {
 
     setIsAnimating(true)
     setCurrentScene(index)
-    
+
     setTimeout(() => {
       setIsAnimating(false)
     }, 1500)
@@ -217,7 +217,7 @@ function AnnualReportWindow() {
     const handleWheel = (e: WheelEvent) => {
       const now = Date.now()
       if (now - lastWheelTime < 1000) return // Throttle wheel events
-      
+
       if (Math.abs(e.deltaY) > 30) {
         lastWheelTime = now
         goToScene(e.deltaY > 0 ? currentScene + 1 : currentScene - 1)
@@ -564,21 +564,21 @@ function AnnualReportWindow() {
         <canvas ref={p0CanvasRef} className="p0-particle-canvas" />
         <div className="p0-center-glow" />
       </div>
-      
+
       <div className="film-grain"></div>
-      
+
       <div id="memory-core"></div>
 
       <div className="pagination">
         {Array.from({ length: TOTAL_SCENES }).map((_, i) => (
-          <div 
-            key={i} 
+          <div
+            key={i}
             className={`dot-nav ${currentScene === i ? 'active' : ''}`}
             onClick={() => goToScene(i)}
           />
         ))}
       </div>
-      
+
       <div className="swipe-hint">向下滑动以继续</div>
 
       {/* S0: THE ARCHIVE */}
@@ -590,7 +590,7 @@ function AnnualReportWindow() {
           <div className={`reveal-inner serif title-year ${yearTitleVariantClass} delay-1`}>{yearTitle}</div>
         </div>
         <div className="reveal-wrap desc-text p0-desc">
-          <div className="reveal-inner serif delay-2 p0-desc-inner">那些被岁月悄悄掩埋的对话<br/>原来都在这里，等待一个春天。</div>
+          <div className="reveal-inner serif delay-2 p0-desc-inner">那些被岁月悄悄掩埋的对话<br />原来都在这里，等待一个春天。</div>
         </div>
       </div>
 
@@ -606,7 +606,7 @@ function AnnualReportWindow() {
         </div>
         <div className="reveal-wrap desc-text">
           <div className="reveal-inner serif delay-2">
-            这一年，你说出了 <strong className="num-display" style={{ color: COLOR.accentGold }}>{reportData.totalMessages.toLocaleString()}</strong> 句话。<br/>无数个日夜的碎碎念，都是为了在茫茫人海中，刻下彼此来过的痕迹。
+            这一年，你说出了 <strong className="num-display" style={{ color: COLOR.accentGold }}>{reportData.totalMessages.toLocaleString()}</strong> 句话。<br />无数个日夜的碎碎念，都是为了在茫茫人海中，刻下彼此来过的痕迹。
           </div>
         </div>
       </div>
@@ -618,20 +618,20 @@ function AnnualReportWindow() {
         </div>
         <div className="reveal-wrap">
           <div className="reveal-inner serif title-time delay-1">
-             {reportData.midnightKing ? reportData.midnightKing.displayName : '00:00'}
+            {reportData.midnightKing ? reportData.midnightKing.displayName : '00:00'}
           </div>
         </div>
         <div className="reveal-wrap">
-          <br/>
+          <br />
           <div className="reveal-inner serif scene0-cn-tag delay-1" style={{ fontSize: '1rem', color: 'var(--c-text-muted)', margin: '1vh 0' }}>
             在深夜陪你聊天最多的人
           </div>
         </div>
         <div className="reveal-wrap desc-text">
           <div className="reveal-inner serif delay-2">
-            梦境之外，你与{reportData.midnightKing ? reportData.midnightKing.displayName : '00:00'}共同醒着度过了许多个夜晚<br/>
+            梦境之外，你与{reportData.midnightKing ? reportData.midnightKing.displayName : '00:00'}共同醒着度过了许多个夜晚<br />
             “曾有<strong className="num-display" style={{ color: COLOR.accentGold, margin: '0 10px', fontSize: '1.5rem' }}>
-               <DecodeText value={(reportData.midnightKing?.count || 0).toLocaleString()} active={currentScene === 2} />
+              <DecodeText value={(reportData.midnightKing?.count || 0).toLocaleString()} active={currentScene === 2} />
             </strong>条消息在那些无人知晓的夜里，代替星光照亮了彼此”
           </div>
         </div>
@@ -689,56 +689,56 @@ function AnnualReportWindow() {
         {reportData.monthlyTopFriends.length > 0 ? (
           <div style={{ position: 'absolute', top: '55vh', left: '10vw', width: '80vw', height: '1px', background: 'transparent' }}>
             {reportData.monthlyTopFriends.map((m, i) => {
-               const leftPos = (i / 11) * 100; // 0% to 100%
-               const isTop = i % 2 === 0; // Alternate up and down to prevent crowding
-               const isRightSide = i >= 6; // Center-focus alignment logic
-               
-               // Pseudo-random organic height variation for audio-wave feel (from 8vh to 18vh)
-               const heightVariation = 12 + (Math.sin(i * 1.5) * 6); 
-               
-               const alignStyle = isRightSide ? { right: '10px', alignItems: 'flex-end', textAlign: 'right' as const } : { left: '10px', alignItems: 'flex-start', textAlign: 'left' as const };
+              const leftPos = (i / 11) * 100; // 0% to 100%
+              const isTop = i % 2 === 0; // Alternate up and down to prevent crowding
+              const isRightSide = i >= 6; // Center-focus alignment logic
 
-               return (
-                 <div key={m.month} className="reveal-wrap float-el" style={{ position: 'absolute', left: `${leftPos}%`, top: 0, width: '1px', height: '1px', overflow: 'visible', animationDelay: `${-(i%4)*0.5}s` }}>
-                    
-                    {/* The connecting thread (gradient fades away from center line) */}
-                    <div className={`reveal-inner delay-${(i % 5) + 1}`} style={{
-                        position: 'absolute', 
-                        left: '-0px', 
-                        top: isTop ? `-${heightVariation}vh` : '0px',
-                        width: '1px', 
-                        height: `${heightVariation}vh`, 
-                        background: isTop
-                          ? 'linear-gradient(to top, rgba(184,148,90,0.34), transparent)'
-                          : 'linear-gradient(to bottom, rgba(184,148,90,0.34), transparent)'
-                    }} />
+              // Pseudo-random organic height variation for audio-wave feel (from 8vh to 18vh)
+              const heightVariation = 12 + (Math.sin(i * 1.5) * 6);
 
-                    {/* Center Glowing Dot */}
-                    <div className={`reveal-inner delay-${(i % 5) + 1}`} style={{ position: 'absolute', left: '-2.5px', top: '-2.5px', width: '6px', height: '6px', borderRadius: '50%', background: 'rgba(184,148,90,0.72)', boxShadow: '0 0 10px rgba(184,148,90,0.34)' }} />
+              const alignStyle = isRightSide ? { right: '10px', alignItems: 'flex-end', textAlign: 'right' as const } : { left: '10px', alignItems: 'flex-start', textAlign: 'left' as const };
 
-                    {/* Text Payload */}
-                    <div className={`reveal-inner delay-${(i % 5) + 1}`} style={{
-                        position: 'absolute',
-                        ...alignStyle,
-                        top: isTop ? `-${heightVariation + 2}vh` : `${heightVariation}vh`,
-                        transform: 'translateY(-50%)',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        width: '20vw' // ample space to avoid wrapping
-                    }}>
-                        <div className="mono num-display" style={{ fontSize: '0.9rem', color: COLOR.textFaint, marginBottom: '4px', letterSpacing: '0.1em' }}>
-                            {m.month.toString().padStart(2, '0')}
-                        </div>
-                        <div className="serif" style={{ fontSize: 'clamp(1rem, 2vw, 1.4rem)', color: COLOR.textStrong, letterSpacing: '0.05em' }}>
-                            {m.displayName}
-                        </div>
-                        <div className="mono num-display" style={{ fontSize: '0.65rem', color: COLOR.textMuted, marginTop: '4px', letterSpacing: '0.1em' }}>
-                            {m.messageCount.toLocaleString()} M
-                        </div>
+              return (
+                <div key={m.month} className="reveal-wrap float-el" style={{ position: 'absolute', left: `${leftPos}%`, top: 0, width: '1px', height: '1px', overflow: 'visible', animationDelay: `${-(i % 4) * 0.5}s` }}>
+
+                  {/* The connecting thread (gradient fades away from center line) */}
+                  <div className={`reveal-inner delay-${(i % 5) + 1}`} style={{
+                    position: 'absolute',
+                    left: '-0px',
+                    top: isTop ? `-${heightVariation}vh` : '0px',
+                    width: '1px',
+                    height: `${heightVariation}vh`,
+                    background: isTop
+                      ? 'linear-gradient(to top, rgba(184,148,90,0.34), transparent)'
+                      : 'linear-gradient(to bottom, rgba(184,148,90,0.34), transparent)'
+                  }} />
+
+                  {/* Center Glowing Dot */}
+                  <div className={`reveal-inner delay-${(i % 5) + 1}`} style={{ position: 'absolute', left: '-2.5px', top: '-2.5px', width: '6px', height: '6px', borderRadius: '50%', background: 'rgba(184,148,90,0.72)', boxShadow: '0 0 10px rgba(184,148,90,0.34)' }} />
+
+                  {/* Text Payload */}
+                  <div className={`reveal-inner delay-${(i % 5) + 1}`} style={{
+                    position: 'absolute',
+                    ...alignStyle,
+                    top: isTop ? `-${heightVariation + 2}vh` : `${heightVariation}vh`,
+                    transform: 'translateY(-50%)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    width: '20vw' // ample space to avoid wrapping
+                  }}>
+                    <div className="mono num-display" style={{ fontSize: '0.9rem', color: COLOR.textFaint, marginBottom: '4px', letterSpacing: '0.1em' }}>
+                      {m.month.toString().padStart(2, '0')}
                     </div>
+                    <div className="serif" style={{ fontSize: 'clamp(1rem, 2vw, 1.4rem)', color: COLOR.textStrong, letterSpacing: '0.05em' }}>
+                      {m.displayName}
+                    </div>
+                    <div className="mono num-display" style={{ fontSize: '0.65rem', color: COLOR.textMuted, marginTop: '4px', letterSpacing: '0.1em' }}>
+                      {m.messageCount.toLocaleString()} M
+                    </div>
+                  </div>
 
-                 </div>
-               );
+                </div>
+              );
             })}
           </div>
         ) : (
@@ -757,29 +757,29 @@ function AnnualReportWindow() {
           <>
             <div className="reveal-wrap desc-text" style={{ position: 'absolute', top: '20vh' }}>
               <div className="reveal-inner serif delay-1" style={{ fontSize: 'clamp(3rem, 7vw, 4rem)', color: COLOR.accentGold, letterSpacing: '0.05em' }}>
-                 {reportData.mutualFriend.displayName}
+                {reportData.mutualFriend.displayName}
               </div>
             </div>
-            
+
             <div className="reveal-wrap" style={{ position: 'absolute', top: '42vh', left: '15vw' }}>
-               <div className="reveal-inner serif scene0-cn-tag delay-2" style={{ fontSize: '0.8rem', color: COLOR.textMuted, letterSpacing: '0.2em' }}>发出</div>
-               <div className="reveal-inner num-display delay-2" style={{ fontSize: 'clamp(2rem, 5vw, 3.5rem)', color: COLOR.accentGold, marginTop: '10px' }}><DecodeText value={reportData.mutualFriend.sentCount.toLocaleString()} active={currentScene === 5} /></div>
+              <div className="reveal-inner serif scene0-cn-tag delay-2" style={{ fontSize: '0.8rem', color: COLOR.textMuted, letterSpacing: '0.2em' }}>发出</div>
+              <div className="reveal-inner num-display delay-2" style={{ fontSize: 'clamp(2rem, 5vw, 3.5rem)', color: COLOR.accentGold, marginTop: '10px' }}><DecodeText value={reportData.mutualFriend.sentCount.toLocaleString()} active={currentScene === 5} /></div>
             </div>
             <div className="reveal-wrap" style={{ position: 'absolute', top: '42vh', right: '15vw', textAlign: 'right' }}>
-               <div className="reveal-inner serif scene0-cn-tag delay-2" style={{ fontSize: '0.8rem', color: COLOR.textMuted, letterSpacing: '0.2em' }}>收到</div>
-               <div className="reveal-inner num-display delay-2" style={{ fontSize: 'clamp(2rem, 5vw, 3.5rem)', color: COLOR.accentGold, marginTop: '10px' }}><DecodeText value={reportData.mutualFriend.receivedCount.toLocaleString()} active={currentScene === 5} /></div>
+              <div className="reveal-inner serif scene0-cn-tag delay-2" style={{ fontSize: '0.8rem', color: COLOR.textMuted, letterSpacing: '0.2em' }}>收到</div>
+              <div className="reveal-inner num-display delay-2" style={{ fontSize: 'clamp(2rem, 5vw, 3.5rem)', color: COLOR.accentGold, marginTop: '10px' }}><DecodeText value={reportData.mutualFriend.receivedCount.toLocaleString()} active={currentScene === 5} /></div>
             </div>
 
             <div className="reveal-wrap desc-text" style={{ position: 'absolute', bottom: '20vh' }}>
               <div className="reveal-inner serif delay-3">
                 你们之间收发的消息高达 <strong className="num-display" style={{ color: COLOR.accentGold, fontSize: '1.5rem' }}>{reportData.mutualFriend.ratio}</strong> 的平衡率
-                <br/>
-                <span style={{ fontSize: '1rem', color: COLOR.textMuted, marginTop: '15px', display: 'block' }}>“你抛出的每一句话，都落在了对方的心里。<br/>所谓重逢，就是我走向你的时候，你也在走向我。”</span>
+                <br />
+                <span style={{ fontSize: '1rem', color: COLOR.textMuted, marginTop: '15px', display: 'block' }}>“你抛出的每一句话，都落在了对方的心里。<br />所谓重逢，就是我走向你的时候，你也在走向我。”</span>
               </div>
             </div>
           </>
         ) : (
-          <div className="reveal-wrap desc-text" style={{ marginTop: '25vh' }}><div className="reveal-inner serif delay-1">今年似乎独自咽下了很多话。<br/>请相信，分别和孤独总会迎来终结，你终会遇到那个懂你的TA。</div></div>
+          <div className="reveal-wrap desc-text" style={{ marginTop: '25vh' }}><div className="reveal-inner serif delay-1">今年似乎独自咽下了很多话。<br />请相信，分别和孤独总会迎来终结，你终会遇到那个懂你的TA。</div></div>
         )}
       </div>
 
@@ -790,45 +790,45 @@ function AnnualReportWindow() {
         </div>
         {reportData.socialInitiative || reportData.responseSpeed ? (
           <div style={{ position: 'absolute', top: '0', left: '0', width: '100%', height: '100%' }}>
-              {reportData.socialInitiative && (
-                <div className="reveal-wrap" style={{ position: 'absolute', top: '28vh', left: '15vw', width: '38vw', textAlign: 'left' }}>
-                  <div className="reveal-inner serif scene0-cn-tag delay-1" style={{ fontSize: '0.8rem', color: COLOR.textMuted, letterSpacing: '0.2em' }}>我的主动性</div>
-                  <div className="reveal-inner num-display delay-2" style={{ fontSize: 'clamp(4.5rem, 8vw, 7rem)', color: COLOR.accentGold, lineHeight: '1', margin: '2vh 0' }}>
-                    {reportData.socialInitiative.initiativeRate}%
+            {reportData.socialInitiative && (
+              <div className="reveal-wrap" style={{ position: 'absolute', top: '28vh', left: '15vw', width: '38vw', textAlign: 'left' }}>
+                <div className="reveal-inner serif scene0-cn-tag delay-1" style={{ fontSize: '0.8rem', color: COLOR.textMuted, letterSpacing: '0.2em' }}>我的主动性</div>
+                <div className="reveal-inner num-display delay-2" style={{ fontSize: 'clamp(4.5rem, 8vw, 7rem)', color: COLOR.accentGold, lineHeight: '1', margin: '2vh 0' }}>
+                  {reportData.socialInitiative.initiativeRate}%
+                </div>
+                <div className="reveal-inner serif delay-3" style={{ fontSize: '1.2rem', color: COLOR.textSoft, lineHeight: '1.8' }}>
+                  <div style={{ fontSize: '1.3rem', color: COLOR.textStrong, marginBottom: '0.6vh' }}>
+                    你的聊天开场大多由你发起。
                   </div>
-                  <div className="reveal-inner serif delay-3" style={{ fontSize: '1.2rem', color: COLOR.textSoft, lineHeight: '1.8' }}>
-                    <div style={{ fontSize: '1.3rem', color: COLOR.textStrong, marginBottom: '0.6vh' }}>
-                      你的聊天开场大多由你发起。
+                  {reportData.socialInitiative.topInitiatedFriend && (reportData.socialInitiative.topInitiatedCount || 0) > 0 ? (
+                    <div style={{ marginBottom: '0.6vh' }}>
+                      其中<strong style={{ color: COLOR.accentGold }}>{reportData.socialInitiative.topInitiatedFriend}</strong>是你最常联系的人，
+                      有<strong className="num-display" style={{ color: COLOR.accentGold, fontSize: '1.2rem', margin: '0 4px' }}>{(reportData.socialInitiative.topInitiatedCount || 0).toLocaleString()}</strong>次，是你先忍不住敲响了对方的门
                     </div>
-                    {reportData.socialInitiative.topInitiatedFriend && (reportData.socialInitiative.topInitiatedCount || 0) > 0 ? (
-                      <div style={{ marginBottom: '0.6vh' }}>
-                        其中<strong style={{ color: COLOR.accentGold }}>{reportData.socialInitiative.topInitiatedFriend}</strong>是你最常联系的人，
-                        有<strong className="num-display" style={{ color: COLOR.accentGold, fontSize: '1.2rem', margin: '0 4px' }}>{(reportData.socialInitiative.topInitiatedCount || 0).toLocaleString()}</strong>次，是你先忍不住敲响了对方的门
-                      </div>
-                    ) : (
-                      <div style={{ marginBottom: '0.6vh' }}>
-                        你主动发起了<strong className="num-display" style={{ color: COLOR.accentGold, fontSize: '1.2rem', margin: '0 4px' }}>{reportData.socialInitiative.initiatedChats.toLocaleString()}</strong>次联络。
-                      </div>
-                    )}
-                    <span style={{ fontSize: '0.9rem', color: COLOR.textMuted }}>想见一个人的心，总是走在时间的前面。</span>
-                  </div>
+                  ) : (
+                    <div style={{ marginBottom: '0.6vh' }}>
+                      你主动发起了<strong className="num-display" style={{ color: COLOR.accentGold, fontSize: '1.2rem', margin: '0 4px' }}>{reportData.socialInitiative.initiatedChats.toLocaleString()}</strong>次联络。
+                    </div>
+                  )}
+                  <span style={{ fontSize: '0.9rem', color: COLOR.textMuted }}>想见一个人的心，总是走在时间的前面。</span>
                 </div>
-              )}
-              {reportData.responseSpeed && (
-                <div className="reveal-wrap" style={{ position: 'absolute', bottom: '22vh', right: '15vw', width: '38vw', textAlign: 'right' }}>
-                  <div className="reveal-inner serif scene0-cn-tag delay-4" style={{ fontSize: '0.8rem', color: COLOR.textMuted, letterSpacing: '0.3em' }}>回应速度</div>
-                  <div className="reveal-inner num-display delay-5" style={{ fontSize: 'clamp(3.5rem, 6vw, 5rem)', color: COLOR.accentSoft, lineHeight: '1', margin: '2vh 0' }}>
-                    <DecodeText value={reportData.responseSpeed.fastestTime} active={currentScene === 6} />S
-                  </div>
-                  <div className="reveal-inner serif delay-6" style={{ fontSize: '1.2rem', color: COLOR.textSoft, lineHeight: '1.8' }}>
-                    <strong style={{ color: COLOR.accentGold }}>{reportData.responseSpeed.fastestFriend}</strong> 回你的消息总是很快。<br/>
-                    <span style={{ fontSize: '0.9rem', color: COLOR.textMuted }}>这世上最让人安心的默契，莫过于一句 "我在"。</span>
-                  </div>
+              </div>
+            )}
+            {reportData.responseSpeed && (
+              <div className="reveal-wrap" style={{ position: 'absolute', bottom: '22vh', right: '15vw', width: '38vw', textAlign: 'right' }}>
+                <div className="reveal-inner serif scene0-cn-tag delay-4" style={{ fontSize: '0.8rem', color: COLOR.textMuted, letterSpacing: '0.3em' }}>回应速度</div>
+                <div className="reveal-inner num-display delay-5" style={{ fontSize: 'clamp(3.5rem, 6vw, 5rem)', color: COLOR.accentSoft, lineHeight: '1', margin: '2vh 0' }}>
+                  <DecodeText value={reportData.responseSpeed.fastestTime} active={currentScene === 6} />S
                 </div>
-              )}
+                <div className="reveal-inner serif delay-6" style={{ fontSize: '1.2rem', color: COLOR.textSoft, lineHeight: '1.8' }}>
+                  <strong style={{ color: COLOR.accentGold }}>{reportData.responseSpeed.fastestFriend}</strong> 回你的消息总是很快。<br />
+                  <span style={{ fontSize: '0.9rem', color: COLOR.textMuted }}>这世上最让人安心的默契，莫过于一句 "我在"。</span>
+                </div>
+              </div>
+            )}
           </div>
         ) : (
-           <div className="reveal-wrap desc-text" style={{ marginTop: '25vh' }}><div className="reveal-inner serif delay-1">暂无数据。</div></div>
+          <div className="reveal-wrap desc-text" style={{ marginTop: '25vh' }}><div className="reveal-inner serif delay-1">暂无数据。</div></div>
         )}
       </div>
 
@@ -837,33 +837,33 @@ function AnnualReportWindow() {
         <div className="reveal-wrap en-tag">
           <div className="reveal-inner serif scene0-cn-tag">聊天火花</div>
         </div>
-        
+
         {reportData.longestStreak ? (
-           <div className="reveal-wrap" style={{ position: 'absolute', top: '35vh', left: '15vw', textAlign: 'left' }}>
-             <div className="reveal-inner serif scene0-cn-tag delay-1" style={{ fontSize: '0.8rem', color: COLOR.textMuted, letterSpacing: '0.3em', marginBottom: '2vh' }}>最长连续聊天</div>
-             <div className="reveal-inner serif delay-2" style={{ fontSize: 'clamp(3rem, 6vw, 5rem)', color: COLOR.accentGold, letterSpacing: '0.02em' }}>
-                {reportData.longestStreak.friendName}
-             </div>
-             <div className="reveal-inner serif delay-3" style={{ fontSize: '1.2rem', color: COLOR.textSoft, marginTop: '2vh' }}>
-                你们曾连续 <strong className="num-display" style={{ color: COLOR.accentGold, fontSize: '1.8rem' }}><DecodeText value={reportData.longestStreak.days} active={currentScene === 7} /></strong> 天，聊到忘记了时间,<br/>那些舍不得说再见的日夜，连成了最漫长的春天。
-             </div>
-           </div>
+          <div className="reveal-wrap" style={{ position: 'absolute', top: '35vh', left: '15vw', textAlign: 'left' }}>
+            <div className="reveal-inner serif scene0-cn-tag delay-1" style={{ fontSize: '0.8rem', color: COLOR.textMuted, letterSpacing: '0.3em', marginBottom: '2vh' }}>最长连续聊天</div>
+            <div className="reveal-inner serif delay-2" style={{ fontSize: 'clamp(3rem, 6vw, 5rem)', color: COLOR.accentGold, letterSpacing: '0.02em' }}>
+              {reportData.longestStreak.friendName}
+            </div>
+            <div className="reveal-inner serif delay-3" style={{ fontSize: '1.2rem', color: COLOR.textSoft, marginTop: '2vh' }}>
+              你们曾连续 <strong className="num-display" style={{ color: COLOR.accentGold, fontSize: '1.8rem' }}><DecodeText value={reportData.longestStreak.days} active={currentScene === 7} /></strong> 天，聊到忘记了时间,<br />那些舍不得说再见的日夜，连成了最漫长的春天。
+            </div>
+          </div>
         ) : null}
 
         {reportData.peakDay ? (
-           <div className="reveal-wrap" style={{ position: 'absolute', bottom: '30vh', right: '15vw', textAlign: 'right' }}>
-             <div className="reveal-inner serif scene0-cn-tag delay-4" style={{ fontSize: '0.8rem', color: COLOR.textMuted, letterSpacing: '0.3em', marginBottom: '2vh' }}>最热烈的一天</div>
-             <div className="reveal-inner num-display delay-5" style={{ fontSize: 'clamp(2.5rem, 5vw, 4rem)', color: COLOR.accentGold, letterSpacing: '0.02em' }}>
-                {reportData.peakDay.date}
-             </div>
-             <div className="reveal-inner serif delay-6" style={{ fontSize: '1.2rem', color: COLOR.textSoft, marginTop: '2vh' }}>
-                “这一天，你们留下了 <strong className="num-display" style={{ color: COLOR.accentGold, fontSize: '1.8rem' }}>{reportData.peakDay.messageCount}</strong> 句话。<br/>好像要把积攒了很久的想念，一天全都说完。”
-             </div>
-           </div>
+          <div className="reveal-wrap" style={{ position: 'absolute', bottom: '30vh', right: '15vw', textAlign: 'right' }}>
+            <div className="reveal-inner serif scene0-cn-tag delay-4" style={{ fontSize: '0.8rem', color: COLOR.textMuted, letterSpacing: '0.3em', marginBottom: '2vh' }}>最热烈的一天</div>
+            <div className="reveal-inner num-display delay-5" style={{ fontSize: 'clamp(2.5rem, 5vw, 4rem)', color: COLOR.accentGold, letterSpacing: '0.02em' }}>
+              {reportData.peakDay.date}
+            </div>
+            <div className="reveal-inner serif delay-6" style={{ fontSize: '1.2rem', color: COLOR.textSoft, marginTop: '2vh' }}>
+              “这一天，你们留下了 <strong className="num-display" style={{ color: COLOR.accentGold, fontSize: '1.8rem' }}>{reportData.peakDay.messageCount}</strong> 句话。<br />好像要把积攒了很久的想念，一天全都说完。”
+            </div>
+          </div>
         ) : null}
-        
+
         {!reportData.longestStreak && !reportData.peakDay && (
-           <div className="reveal-wrap desc-text" style={{ marginTop: '25vh' }}><div className="reveal-inner serif delay-1">没有激起过火花。</div></div>
+          <div className="reveal-wrap desc-text" style={{ marginTop: '25vh' }}><div className="reveal-inner serif delay-1">没有激起过火花。</div></div>
         )}
       </div>
 
@@ -872,44 +872,68 @@ function AnnualReportWindow() {
         <div className="reveal-wrap en-tag">
           <div className="reveal-inner serif scene0-cn-tag">曾经的好友</div>
         </div>
+
+        {reportData.lostFriend && (
+          <div className="s8-bg-layer">
+            <img src={reportData.lostFriend.avatarUrl} alt="" className="bg-avatar" />
+          </div>
+        )}
+
+
         {reportData.lostFriend ? (
-          <div className="s8-layout">
-            <div className="s8-left">
-              <div className="reveal-wrap s8-name-wrap">
-                <div className="reveal-inner serif delay-1 s8-name">
+          <div className="s8-floating-layout">
+            <div className="s8-hero-unit">
+              <div className="reveal-wrap">
+                <div className="reveal-inner s8-name delay-1">
                   {reportData.lostFriend.displayName}
                 </div>
               </div>
-              <div className="reveal-wrap s8-summary-wrap">
-                <div className="reveal-inner serif delay-2 s8-summary">
-                  后来，你们的交集停留在{reportData.lostFriend.periodDesc}这短短的
-                  <span className="num-display s8-summary-count">
+              <div className="reveal-wrap">
+                <div className="reveal-inner s8-meta delay-2">
+                  {reportData.lostFriend.periodDesc} /
+                  <span className="num-display" style={{ margin: '0 10px', fontSize: '1.4em' }}>
                     <DecodeText value={reportData.lostFriend.lateCount.toLocaleString()} active={currentScene === 8} />
                   </span>
-                  句话里。
-                </div>
-              </div>
-              <div className="reveal-wrap s8-quote-wrap">
-                <div className="reveal-inner serif delay-3 s8-quote">
-                  “我一直相信我们能够再次相见，相信分别的日子总会迎来终结。”
+                  MESSAGES
                 </div>
               </div>
             </div>
-            <div className="reveal-wrap s8-letter-wrap">
-              <div className="reveal-inner serif delay-4 s8-letter">
-                所有的离散，或许都只是一场漫长的越冬。飞鸟要越过一万座雪山，才能带来春天的第一行回信；树木要褪去一万次枯叶，才能记住风的形状。如果时间注定要把我们推向不同的象限，那就在记忆的最深处建一座灯塔。哪怕要熬过几千个无法见面的黄昏，也要相信，总有一次日出的晨光，是为了照亮我们重逢的归途。
+
+            <div className="s8-fragments">
+              <div className="reveal-wrap fragment f1">
+                <div className="reveal-inner delay-3">
+                  “我一直相信我们能够再次相见，<br />相信分别的日子总会迎来终结。”
+                </div>
+              </div>
+
+              <div className="reveal-wrap fragment f2">
+                <div className="reveal-inner delay-4">
+                  所有的离散，或许都只是一场漫长的越冬。<br />
+                  飞鸟要越过一万座雪山，才能带来春天的第一行回信；<br />
+                  树木要褪去一万次枯叶，才能记住风的形状。
+                </div>
+              </div>
+
+              <div className="reveal-wrap fragment f3">
+                <div className="reveal-inner delay-5">
+                  哪怕要熬过几千个无法见面的黄昏，也要相信，<br />
+                  总有一次日出的晨光，是为了照亮我们重逢的归途。
+                </div>
               </div>
             </div>
           </div>
         ) : (
-          <div className="reveal-wrap desc-text s8-empty-wrap">
-            <div className="reveal-inner serif delay-1 s8-empty-text">
-              缘分温柔地眷顾着你。<br/>
-              这一年，所有重要的人都在，没有一次无疾而终的告别。<br/>
+          <div className="s8-floating-layout">
+            <div className="reveal-wrap s8-empty-wrap">
+              <div className="reveal-inner serif s8-empty-text delay-1">
+                缘分温柔地眷顾着你。<br />
+                这一年，所有重要的人都在，没有一次无疾而终的告别。
+              </div>
             </div>
           </div>
         )}
       </div>
+
 
       {/* S9: LEXICON & ARCHIVE */}
       <div className={getSceneClass(9)} id="scene-9">
@@ -936,16 +960,16 @@ function AnnualReportWindow() {
           const st = demoStyles[i];
 
           return (
-            <div 
-              key={phrase.phrase + i} 
+            <div
+              key={phrase.phrase + i}
               className="word-burst"
-              style={{ 
-                left: st.left, 
-                top: st.top, 
-                fontSize: st.fontSize, 
-                color: st.color, 
-                transitionDelay: st.delay, 
-                '--target-op': st.targetOp 
+              style={{
+                left: st.left,
+                top: st.top,
+                fontSize: st.fontSize,
+                color: st.color,
+                transitionDelay: st.delay,
+                '--target-op': st.targetOp
               } as React.CSSProperties}
             >
               <span className="float-el" style={{ animationDelay: st.floatDelay }}>{phrase.phrase}</span>
@@ -953,7 +977,7 @@ function AnnualReportWindow() {
           )
         })}
         {(!reportData.topPhrases || reportData.topPhrases.length === 0) && (
-           <div className="reveal-wrap desc-text" style={{ marginTop: '25vh' }}><div className="reveal-inner serif delay-1">词汇量太少，无法形成星云。</div></div>
+          <div className="reveal-wrap desc-text" style={{ marginTop: '25vh' }}><div className="reveal-inner serif delay-1">词汇量太少，无法形成星云。</div></div>
         )}
       </div>
 
@@ -962,7 +986,7 @@ function AnnualReportWindow() {
         <div className="reveal-wrap en-tag" style={{ zIndex: 20 }}>
           <div className="reveal-inner serif scene0-cn-tag" style={{ color: COLOR.paperMuted }}>旅程的终点</div>
         </div>
-        
+
         {/* The Final Summary Receipt / Dashboard */}
         <div className="reveal-wrap" style={{ position: 'absolute', top: '45vh', left: '50vw', transform: 'translate(-50%, -50%)', width: '60vw', textAlign: 'center', zIndex: 20 }}>
           <div className="reveal-inner delay-1" style={{ display: 'flex', flexDirection: 'column', gap: '3vh' }}>
@@ -972,7 +996,7 @@ function AnnualReportWindow() {
             <div className="mono" style={{ fontSize: '0.8rem', color: COLOR.paperMuted, letterSpacing: '0.4em' }}>
               TRANSMISSION COMPLETE
             </div>
-            
+
             {/* Core Stats Row */}
             <div style={{ display: 'flex', justifyContent: 'space-around', marginTop: '6vh', borderTop: '1px solid rgba(110, 89, 46, 0.35)', borderBottom: '1px solid rgba(110, 89, 46, 0.35)', padding: '4vh 0' }}>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
@@ -988,9 +1012,9 @@ function AnnualReportWindow() {
                 <div className="num-display" style={{ fontSize: '2.5rem', color: COLOR.accentMuted, fontWeight: 600 }}>“{endingTopPhrase}”</div>
               </div>
             </div>
-            
+
             <div className="serif" style={{ fontSize: '1.2rem', color: 'rgba(34, 28, 16, 0.82)', marginTop: '4vh', letterSpacing: '0.05em' }}>
-              “故事的最后，我们把这一切悄悄还给岁月<br/>只要这些文字还在，所有的离别，就都只是一场短暂的缺席。”
+              “故事的最后，我们把这一切悄悄还给岁月<br />只要这些文字还在，所有的离别，就都只是一场短暂的缺席。”
             </div>
           </div>
         </div>
@@ -1009,15 +1033,15 @@ function AnnualReportWindow() {
                 fontWeight: 500
               }}
             >
-              数据数得清一万句落笔的寒暄，却度量不出一个默契的眼神。<br/>在这片由数字构建的大海里，热烈的回应未必是感情的全部轮廓。<br/>真正的爱与羁绊，从来都不在跳动的屏幕里，而在无法被量化的现实。
+              数据数得清一万句落笔的寒暄，却度量不出一个默契的眼神。<br />在这片由数字构建的大海里，热烈的回应未必是感情的全部轮廓。<br />真正的爱与羁绊，从来都不在跳动的屏幕里，而在无法被量化的现实。
             </div>
           </div>
           <div className="reveal-wrap">
-            <button 
-              className="btn num-display reveal-inner delay-3" 
+            <button
+              className="btn num-display reveal-inner delay-3"
               onClick={handleExtract}
               disabled={isExtracting}
-              style={{ 
+              style={{
                 background: isExtracting ? '#CDC4B0' : (buttonText === 'SAVED TO DEVICE' ? '#1A140A' : '#101010'),
                 color: 'var(--c-gold-strong)',
                 fontSize: '0.85rem',
