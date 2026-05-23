@@ -1456,7 +1456,13 @@ export interface ElectronAPI {
       avatarUrl?: string
       startTime: number
       endTime: number
-    }) => Promise<{ success: boolean; message: string; recordId?: string; record?: GroupSummaryRecord; skipped?: boolean; skippedReason?: string }>
+    }) => Promise<{ success: boolean; message: string; recordId?: string; record?: GroupSummaryRecordSummary; skipped?: boolean; skippedReason?: string }>
+    triggerDay: (payload: {
+      sessionId: string
+      displayName?: string
+      avatarUrl?: string
+      date: string
+    }) => Promise<{ success: boolean; message: string; generated: number; skipped: number; records: GroupSummaryRecordSummary[] }>
   }
 }
 

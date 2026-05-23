@@ -2183,6 +2183,7 @@ export async function setAiFootprintSystemPrompt(prompt: string): Promise<void> 
   await config.set(CONFIG_KEYS.AI_FOOTPRINT_SYSTEM_PROMPT, prompt)
 }
 
+// Legacy only: 群聊总结现在只使用 aiGroupSummaryFilterList 作为作用域白名单。
 export type AiGroupSummaryFilterMode = 'whitelist' | 'blacklist'
 
 const AI_GROUP_SUMMARY_INTERVALS = new Set([1, 2, 4, 8, 12, 24])

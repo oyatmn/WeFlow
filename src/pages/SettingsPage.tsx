@@ -6,6 +6,7 @@ import { useThemeStore, themes } from '../stores/themeStore'
 import { useAnalyticsStore } from '../stores/analyticsStore'
 import { dialog } from '../services/ipc'
 import * as configService from '../services/config'
+import groupSummaryPrompt from '../../shared/groupSummaryPrompt.json'
 import type { ChatSession, ContactInfo } from '../types/models'
 import {
   Eye, EyeOff, FolderSearch, FolderOpen, Search, Copy,
@@ -70,6 +71,7 @@ const isMac = navigator.userAgent.toLowerCase().includes('mac')
 const isLinux = navigator.userAgent.toLowerCase().includes('linux')
 const isWindows = !isMac && !isLinux
 const MAC_KEY_FAQ_URL = 'https://github.com/hicccc77/WeFlow/blob/main/docs/MAC-KEY-FAQ.md'
+const DEFAULT_GROUP_SUMMARY_SYSTEM_PROMPT = String(groupSummaryPrompt.defaultSystemPrompt || '').trim()
 
 const dbDirName = isMac ? '2.0b4.0.9 目录' : 'xwechat_files 目录'
 const dbPathPlaceholder = isMac
@@ -334,9 +336,7 @@ function SettingsPage({ onClose }: SettingsPageProps = {}) {
   const [aiGroupSummaryEnabled, setAiGroupSummaryEnabled] = useState(false)
   const [aiGroupSummaryIntervalHours, setAiGroupSummaryIntervalHours] = useState(4)
   const [aiGroupSummarySystemPrompt, setAiGroupSummarySystemPrompt] = useState('')
-  const [aiGroupSummaryFilterMode, setAiGroupSummaryFilterMode] = useState<configService.AiGroupSummaryFilterMode>('whitelist')
   const [aiGroupSummaryFilterList, setAiGroupSummaryFilterList] = useState<string[]>([])
-  const [aiGroupSummaryFilterDropdownOpen, setAiGroupSummaryFilterDropdownOpen] = useState(false)
   const [aiGroupSummaryFilterSearchKeyword, setAiGroupSummaryFilterSearchKeyword] = useState('')
   const [aiMessageInsightEnabled, setAiMessageInsightEnabled] = useState(false)
   const [aiMessageInsightContextCount, setAiMessageInsightContextCount] = useState(50)
@@ -607,7 +607,6 @@ function SettingsPage({ onClose }: SettingsPageProps = {}) {
       const savedAiGroupSummaryEnabled = await configService.getAiGroupSummaryEnabled()
       const savedAiGroupSummaryIntervalHours = await configService.getAiGroupSummaryIntervalHours()
       const savedAiGroupSummarySystemPrompt = await configService.getAiGroupSummarySystemPrompt()
-      const savedAiGroupSummaryFilterMode = await configService.getAiGroupSummaryFilterMode()
       const savedAiGroupSummaryFilterList = await configService.getAiGroupSummaryFilterList()
       const savedAiMessageInsightEnabled = await configService.getAiMessageInsightEnabled()
       const savedAiMessageInsightContextCount = await configService.getAiMessageInsightContextCount()
@@ -641,7 +640,6 @@ function SettingsPage({ onClose }: SettingsPageProps = {}) {
       setAiGroupSummaryEnabled(savedAiGroupSummaryEnabled)
       setAiGroupSummaryIntervalHours(savedAiGroupSummaryIntervalHours)
       setAiGroupSummarySystemPrompt(savedAiGroupSummarySystemPrompt)
-      setAiGroupSummaryFilterMode(savedAiGroupSummaryFilterMode)
       setAiGroupSummaryFilterList(savedAiGroupSummaryFilterList)
       setAiMessageInsightEnabled(savedAiMessageInsightEnabled)
       setAiMessageInsightContextCount(savedAiMessageInsightContextCount)
@@ -4061,19 +4059,21 @@ function SettingsPage({ onClose }: SettingsPageProps = {}) {
   )
 
   const renderAiGroupSummaryTab = () => {
+    const groupSummaryPromptDisplayValue = aiGroupSummarySystemPrompt || DEFAULT_GROUP_SUMMARY_SYSTEM_PROMPT
+
     const addToFilterList = async (username: string) => {
       if (!username.endsWith('@chatroom') || aiGroupSummaryFilterList.includes(username)) return
       const next = [...aiGroupSummaryFilterList, username]
       setAiGroupSummaryFilterList(next)
       await configService.setAiGroupSummaryFilterList(next)
-      showMessage('已添加到群聊总结名单', true)
+      showMessage('已添加到群聊总结作用域', true)
     }
 
     const removeFromFilterList = async (username: string) => {
       const next = aiGroupSummaryFilterList.filter((item) => item !== username)
       setAiGroupSummaryFilterList(next)
       await configService.setAiGroupSummaryFilterList(next)
-      showMessage('已从群聊总结名单移除', true)
+      showMessage('已从群聊总结作用域移除', true)
     }
 
     const addAllFiltered = async () => {
@@ -4089,7 +4089,7 @@ function SettingsPage({ onClose }: SettingsPageProps = {}) {
       if (aiGroupSummaryFilterList.length === 0) return
       setAiGroupSummaryFilterList([])
       await configService.setAiGroupSummaryFilterList([])
-      showMessage('已清空群聊总结名单', true)
+      showMessage('已清空群聊总结作用域', true)
     }
 
     return (
@@ -4097,7 +4097,7 @@ function SettingsPage({ onClose }: SettingsPageProps = {}) {
         <div className="form-group">
           <label>AI 群聊总结</label>
           <span className="form-hint">
-            开启后，群聊页顶部会显示 AI 总结按钮；自动总结只对下面黑白名单命中的群聊生效。默认白名单且不选择任何群聊，不会自动消耗 token。
+            开启后，群聊页顶部会显示 AI 总结按钮；自动总结只对下面作用域内的群聊生效。未选择任何群聊时不会自动消耗 token。
           </span>
           <div className="log-toggle-line">
             <span className="log-status">{aiGroupSummaryEnabled ? '已开启' : '已关闭'}</span>
@@ -4143,81 +4143,49 @@ function SettingsPage({ onClose }: SettingsPageProps = {}) {
 
         <div className="form-group">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-            <label style={{ marginBottom: 0 }}>自定义提示词</label>
-            {aiGroupSummarySystemPrompt && (
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={async () => {
-                  setAiGroupSummarySystemPrompt('')
-                  await configService.setAiGroupSummarySystemPrompt('')
-                }}
-              >
-                恢复默认
-              </button>
-            )}
+            <label style={{ marginBottom: 0 }}>群聊总结提示词</label>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={async () => {
+                setAiGroupSummarySystemPrompt('')
+                await configService.setAiGroupSummarySystemPrompt('')
+              }}
+            >
+              恢复默认
+            </button>
           </div>
           <span className="form-hint">
-            固定输出格式不会被覆盖，这里只补充你的偏好，例如更关注决策、争议或待办。
+            群聊总结专用提示词。留空时使用内置默认提示词。
           </span>
           <textarea
-            className="field-input"
-            rows={5}
+            className="field-input ai-prompt-textarea"
+            rows={10}
             style={{ width: '100%', resize: 'vertical', marginTop: 8 }}
-            value={aiGroupSummarySystemPrompt}
-            placeholder="例如：优先识别待办事项和负责人，忽略纯闲聊。"
+            value={groupSummaryPromptDisplayValue}
             onChange={(e) => {
               const val = e.target.value
               setAiGroupSummarySystemPrompt(val)
               scheduleConfigSave('aiGroupSummarySystemPrompt', () => configService.setAiGroupSummarySystemPrompt(val))
             }}
           />
+          <span className="form-hint" style={{ color: 'var(--danger, #ef4444)', marginTop: 8, display: 'block' }}>
+            该提示词控制 JSON 输出结构和总结解析路径，不建议随意修改，否则可能导致总结失败或内容错位。
+          </span>
         </div>
 
         <div className="divider" />
 
         <div className="form-group">
-          <label>自动总结群聊黑白名单</label>
+          <label>自动总结作用域群聊</label>
           <span className="form-hint">
-            仅控制自动总结范围。手动点击群聊页 AI 总结按钮不受名单限制；白名单为空时自动总结不会运行。
+            仅控制自动总结范围。手动点击群聊页 AI 总结按钮不受作用域限制；未选择任何群聊时自动总结不会运行。
           </span>
-          <div className="custom-select" style={{ maxWidth: 240, marginTop: 8 }}>
-            <div
-              className={`custom-select-trigger ${aiGroupSummaryFilterDropdownOpen ? 'open' : ''}`}
-              onClick={() => setAiGroupSummaryFilterDropdownOpen(!aiGroupSummaryFilterDropdownOpen)}
-            >
-              <span className="custom-select-value">
-                {aiGroupSummaryFilterMode === 'whitelist' ? '白名单模式' : '黑名单模式'}
-              </span>
-              <ChevronDown size={14} className={`custom-select-arrow ${aiGroupSummaryFilterDropdownOpen ? 'rotate' : ''}`} />
-            </div>
-            <div className={`custom-select-dropdown ${aiGroupSummaryFilterDropdownOpen ? 'open' : ''}`}>
-              {[
-                { value: 'whitelist', label: '白名单模式' },
-                { value: 'blacklist', label: '黑名单模式' }
-              ].map(option => (
-                <div
-                  key={option.value}
-                  className={`custom-select-option ${aiGroupSummaryFilterMode === option.value ? 'selected' : ''}`}
-                  onClick={async () => {
-                    const mode = option.value as configService.AiGroupSummaryFilterMode
-                    setAiGroupSummaryFilterMode(mode)
-                    setAiGroupSummaryFilterDropdownOpen(false)
-                    await configService.setAiGroupSummaryFilterMode(mode)
-                    showMessage(mode === 'whitelist' ? '已切换为白名单模式' : '已切换为黑名单模式', true)
-                  }}
-                >
-                  {option.label}
-                  {aiGroupSummaryFilterMode === option.value && <Check size={14} />}
-                </div>
-              ))}
-            </div>
-          </div>
 
-          {aiGroupSummaryFilterMode === 'whitelist' && aiGroupSummaryFilterList.length === 0 && (
+          {aiGroupSummaryFilterList.length === 0 && (
             <div className="api-docs" style={{ marginTop: 12 }}>
               <div className="api-item">
-                <p className="api-desc">当前为白名单空列表，自动群聊总结不会触发。</p>
+                <p className="api-desc">当前未选择作用域群聊，自动群聊总结不会触发。</p>
               </div>
             </div>
           )}
@@ -4265,7 +4233,7 @@ function SettingsPage({ onClose }: SettingsPageProps = {}) {
 
             <div className="filter-panel">
               <div className="filter-panel-header">
-                <span>{aiGroupSummaryFilterMode === 'whitelist' ? '白名单' : '黑名单'}</span>
+                <span>作用域群聊</span>
                 {aiGroupSummaryFilterList.length > 0 && (
                   <span className="filter-panel-count">{aiGroupSummaryFilterList.length}</span>
                 )}

@@ -1884,6 +1884,15 @@ function registerIpcHandlers() {
     return groupSummaryService.triggerManual(payload)
   })
 
+  ipcMain.handle('groupSummary:triggerDay', async (_, payload: {
+    sessionId: string
+    displayName?: string
+    avatarUrl?: string
+    date: string
+  }) => {
+    return groupSummaryService.triggerDay(payload)
+  })
+
   ipcMain.handle('social:saveWeiboCookie', async (_, rawInput: string) => {
     try {
       if (!configService) {

@@ -3595,7 +3595,8 @@
       font-weight: 600;
     }
 
-    input {
+    input,
+    .group-summary-date-trigger {
       height: 32px;
       min-width: 0;
       border: 1px solid var(--border-color);
@@ -3605,6 +3606,40 @@
       padding: 0 9px;
       font-size: 12px;
     }
+  }
+
+  .group-summary-date-picker {
+    position: relative;
+    min-width: 0;
+  }
+
+  .group-summary-date-trigger {
+    width: 100%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    cursor: pointer;
+    transition: all 0.16s ease;
+
+    svg {
+      color: var(--text-secondary);
+      flex-shrink: 0;
+    }
+
+    &:hover,
+    &.open {
+      border-color: color-mix(in srgb, var(--primary) 36%, var(--border-color));
+      background: var(--bg-hover);
+    }
+  }
+
+  .group-summary-calendar-popover {
+    right: auto;
+    left: 0;
+    top: calc(100% + 8px);
+    width: min(312px, calc(100vw - 32px));
+    border-radius: 10px;
   }
 
   .group-summary-icon-btn,
@@ -3653,23 +3688,6 @@
         background: color-mix(in srgb, var(--primary) 10%, var(--card-bg));
         font-weight: 600;
       }
-    }
-  }
-
-  .group-summary-custom-range {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 6px;
-
-    input {
-      height: 32px;
-      min-width: 0;
-      border: 1px solid var(--border-color);
-      border-radius: 8px;
-      background: var(--card-bg);
-      color: var(--text-primary);
-      padding: 0 9px;
-      font-size: 12px;
     }
   }
 

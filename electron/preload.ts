@@ -624,7 +624,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       avatarUrl?: string
       startTime: number
       endTime: number
-    }) => ipcRenderer.invoke('groupSummary:triggerManual', payload)
+    }) => ipcRenderer.invoke('groupSummary:triggerManual', payload),
+    triggerDay: (payload: {
+      sessionId: string
+      displayName?: string
+      avatarUrl?: string
+      date: string
+    }) => ipcRenderer.invoke('groupSummary:triggerDay', payload)
   },
 
   social: {

@@ -1,8 +1,9 @@
 import https from 'https'
 import http from 'http'
 import { URL } from 'url'
+import groupSummaryPrompt from '../../shared/groupSummaryPrompt.json'
 import { ConfigService } from './config'
-import { chatService, type ChatSession, type Message } from './chatService'
+import { chatService, type Message } from './chatService'
 import { wcdbService } from './wcdbService'
 import {
   groupSummaryRecordService,
@@ -10,6 +11,7 @@ import {
   type GroupSummaryRecord,
   type GroupSummaryRecordFilters,
   type GroupSummaryRecordListResult,
+  type GroupSummaryRecordSummary,
   type GroupSummaryTopic,
   type GroupSummaryTriggerType
 } from './groupSummaryRecordService'
@@ -20,6 +22,7 @@ const MIN_SUMMARY_MESSAGES = 5
 const MAX_MANUAL_RANGE_SECONDS = 48 * 60 * 60
 const MAX_MESSAGES_PER_SUMMARY = 3000
 const SUMMARY_CURSOR_BATCH_SIZE = 360
+const DEFAULT_GROUP_SUMMARY_SYSTEM_PROMPT = String(groupSummaryPrompt.defaultSystemPrompt || '').trim()
 const SUMMARY_CONFIG_KEYS = new Set([
   'aiGroupSummaryEnabled',
   'aiGroupSummaryIntervalHours',
@@ -37,8 +40,6 @@ const SUMMARY_CONFIG_KEYS = new Set([
   'myWxid'
 ])
 
-type GroupSummaryFilterMode = 'whitelist' | 'blacklist'
-
 interface SharedAiModelConfig {
   apiBaseUrl: string
   apiKey: string
@@ -49,9 +50,17 @@ interface GroupSummaryTriggerResult {
   success: boolean
   message: string
   recordId?: string
-  record?: GroupSummaryRecord
+  record?: GroupSummaryRecordSummary
   skipped?: boolean
   skippedReason?: string
+}
+
+interface GroupSummaryDayTriggerResult {
+  success: boolean
+  message: string
+  generated: number
+  skipped: number
+  records: GroupSummaryRecordSummary[]
 }
 
 class ApiRequestError extends Error {
@@ -248,6 +257,7 @@ class GroupSummaryService {
   private started = false
   private scanTimer: NodeJS.Timeout | null = null
   private processing = false
+  private pendingAutoRun = false
   private dbConnected = false
 
   constructor() {
@@ -264,12 +274,14 @@ class GroupSummaryService {
     this.started = false
     this.clearTimers()
     this.processing = false
+    this.pendingAutoRun = false
     this.dbConnected = false
   }
 
   async handleConfigChanged(key: string): Promise<void> {
     const normalizedKey = String(key || '').trim()
     if (!SUMMARY_CONFIG_KEYS.has(normalizedKey)) return
+    if (normalizedKey === 'aiGroupSummarySystemPrompt') return
     if (normalizedKey === 'dbPath' || normalizedKey === 'decryptKey' || normalizedKey === 'myWxid') {
       this.dbConnected = false
       groupSummaryRecordService.clearRuntimeCache()
@@ -280,6 +292,7 @@ class GroupSummaryService {
   handleConfigCleared(): void {
     this.clearTimers()
     this.processing = false
+    this.pendingAutoRun = false
     this.dbConnected = false
     groupSummaryRecordService.clearRuntimeCache()
   }
@@ -327,11 +340,51 @@ class GroupSummaryService {
     })
   }
 
+  async triggerDay(params: {
+    sessionId: string
+    displayName?: string
+    avatarUrl?: string
+    date: string
+  }): Promise<GroupSummaryDayTriggerResult> {
+    if (!this.isEnabled()) {
+      return { success: false, message: '请先在设置中开启「AI 群聊总结」', generated: 0, skipped: 0, records: [] }
+    }
+    const sessionId = String(params?.sessionId || '').trim()
+    if (!sessionId.endsWith('@chatroom')) {
+      return { success: false, message: 'AI 群聊总结仅支持群聊', generated: 0, skipped: 0, records: [] }
+    }
+    const dayRange = this.parseLocalDateDayRange(params?.date)
+    if (!dayRange) {
+      return { success: false, message: '请选择有效日期', generated: 0, skipped: 0, records: [] }
+    }
+    const todayStart = getStartOfDaySeconds(new Date())
+    if (dayRange.start > todayStart) {
+      return { success: false, message: '不能总结未来日期', generated: 0, skipped: 0, records: [] }
+    }
+
+    const now = Math.floor(Date.now() / 1000)
+    const effectiveEnd = dayRange.start === todayStart ? Math.min(dayRange.end, now) : dayRange.end
+    const periods = this.getIntervalPeriods(dayRange.start, effectiveEnd, false)
+    if (periods.length === 0) {
+      return { success: true, message: '当前日期暂无已完成的总结时段', generated: 0, skipped: 0, records: [] }
+    }
+
+    const displayName = String(params?.displayName || sessionId).trim() || sessionId
+    const avatarUrl = String(params?.avatarUrl || '').trim() || undefined
+    return this.generateSummariesForPeriods({
+      sessionId,
+      displayName,
+      avatarUrl,
+      periods,
+      triggerType: 'manual'
+    })
+  }
+
   private async refreshConfiguration(_reason: string): Promise<void> {
     if (!this.started) return
     this.clearTimers()
     if (!this.isEnabled()) return
-    await this.runDueAutoSummaries()
+    await this.queueDueAutoSummaries()
     this.scheduleNextAutoRun()
   }
 
@@ -358,7 +411,7 @@ class GroupSummaryService {
 
     this.scanTimer = setTimeout(async () => {
       this.scanTimer = null
-      await this.runDueAutoSummaries()
+      await this.queueDueAutoSummaries()
       this.scheduleNextAutoRun()
     }, delayMs)
   }
@@ -389,18 +442,9 @@ class GroupSummaryService {
     return { apiBaseUrl, apiKey, model }
   }
 
-  private getFilterConfig(): { mode: GroupSummaryFilterMode; list: string[] } {
-    const rawMode = String(this.config.get('aiGroupSummaryFilterMode') || '').trim()
-    const mode: GroupSummaryFilterMode = rawMode === 'blacklist' ? 'blacklist' : 'whitelist'
-    const list = normalizeSessionIdList(this.config.get('aiGroupSummaryFilterList'))
+  private getAutoScopeSessionIds(): string[] {
+    return normalizeSessionIdList(this.config.get('aiGroupSummaryFilterList'))
       .filter((sessionId) => sessionId.endsWith('@chatroom'))
-    return { mode, list }
-  }
-
-  private isAutoSessionAllowed(sessionId: string): boolean {
-    const { mode, list } = this.getFilterConfig()
-    if (mode === 'whitelist') return list.includes(sessionId)
-    return !list.includes(sessionId)
   }
 
   private normalizeTimestampSeconds(value: unknown): number {
@@ -413,45 +457,86 @@ class GroupSummaryService {
     return normalized
   }
 
-  private getCompletedPeriodsToday(): Array<{ start: number; end: number }> {
+  private parseLocalDateDayRange(value: unknown): { start: number; end: number } | null {
+    const text = String(value || '').trim()
+    const match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+    if (!match) return null
+    const year = Number(match[1])
+    const month = Number(match[2])
+    const day = Number(match[3])
+    const start = new Date(year, month - 1, day, 0, 0, 0, 0)
+    if (
+      !Number.isFinite(start.getTime()) ||
+      start.getFullYear() !== year ||
+      start.getMonth() !== month - 1 ||
+      start.getDate() !== day
+    ) {
+      return null
+    }
+    const end = new Date(start)
+    end.setDate(end.getDate() + 1)
+    return {
+      start: Math.floor(start.getTime() / 1000),
+      end: Math.floor(end.getTime() / 1000)
+    }
+  }
+
+  private getIntervalPeriods(startTime: number, endTime: number, includePartial: boolean): Array<{ start: number; end: number }> {
     const intervalHours = normalizeIntervalHours(this.config.get('aiGroupSummaryIntervalHours'))
     const intervalSeconds = intervalHours * 60 * 60
-    const dayStart = getStartOfDaySeconds(new Date())
-    const now = Math.floor(Date.now() / 1000)
     const periods: Array<{ start: number; end: number }> = []
-    for (let start = dayStart; start + intervalSeconds <= now; start += intervalSeconds) {
-      periods.push({ start, end: start + intervalSeconds })
+    for (let start = startTime; start < endTime; start += intervalSeconds) {
+      const end = Math.min(start + intervalSeconds, endTime)
+      if (!includePartial && end - start < intervalSeconds) continue
+      if (end > start) periods.push({ start, end })
     }
     return periods
   }
 
-  private async runDueAutoSummaries(): Promise<void> {
-    if (!this.started || !this.isEnabled() || this.processing) return
+  private getCompletedPeriodsToday(): Array<{ start: number; end: number }> {
+    const dayStart = getStartOfDaySeconds(new Date())
+    const now = Math.floor(Date.now() / 1000)
+    return this.getIntervalPeriods(dayStart, now, false)
+  }
+
+  private async queueDueAutoSummaries(): Promise<void> {
+    if (!this.started || !this.isEnabled()) return
+    if (this.processing) {
+      this.pendingAutoRun = true
+      return
+    }
     this.processing = true
+    try {
+      do {
+        this.pendingAutoRun = false
+        await this.runDueAutoSummariesOnce()
+      } while (this.pendingAutoRun && this.started && this.isEnabled())
+    } finally {
+      this.processing = false
+    }
+  }
+
+  private async runDueAutoSummariesOnce(): Promise<void> {
+    if (!this.started || !this.isEnabled()) return
     try {
       const { apiBaseUrl, apiKey } = this.getSharedAiModelConfig()
       if (!apiBaseUrl || !apiKey) return
-      const { mode, list } = this.getFilterConfig()
-      if (mode === 'whitelist' && list.length === 0) return
+      const scopeSessionIds = this.getAutoScopeSessionIds()
+      if (scopeSessionIds.length === 0) return
       if (!await this.ensureConnected()) return
 
-      const sessionsResult = await chatService.getSessions()
-      if (!sessionsResult.success || !Array.isArray(sessionsResult.sessions)) return
-      const groupSessions = (sessionsResult.sessions as ChatSession[])
-        .filter((session) => String(session.username || '').trim().endsWith('@chatroom'))
-        .filter((session) => this.isAutoSessionAllowed(String(session.username || '').trim()))
+      const contacts = (await chatService.enrichSessionsContactInfo(scopeSessionIds).catch(() => null))?.contacts || {}
 
       const periods = this.getCompletedPeriodsToday()
       for (const period of periods) {
-        for (const session of groupSessions) {
+        for (const sessionId of scopeSessionIds) {
           if (!this.started || !this.isEnabled()) return
-          const sessionId = String(session.username || '').trim()
           if (!sessionId) continue
           if (groupSummaryRecordService.hasAutoRecord(sessionId, period.start, period.end)) continue
           await this.generateSummaryForPeriod({
             sessionId,
-            displayName: session.displayName || sessionId,
-            avatarUrl: session.avatarUrl,
+            displayName: contacts[sessionId]?.displayName || sessionId,
+            avatarUrl: contacts[sessionId]?.avatarUrl,
             periodStart: period.start,
             periodEnd: period.end,
             triggerType: 'auto'
@@ -460,8 +545,6 @@ class GroupSummaryService {
       }
     } catch (error) {
       console.warn('[GroupSummaryService] 自动总结失败:', error)
-    } finally {
-      this.processing = false
     }
   }
 
@@ -582,28 +665,8 @@ class GroupSummaryService {
         }
       }
 
-      const defaultSystemPrompt = `你是一个群聊会议纪要式总结助手。你只根据用户提供的群聊记录总结，不编造记录中没有的信息。
-
-严格要求：
-1. 必须且只能输出合法纯 JSON，禁止 Markdown 和解释说明。
-2. 按话题分类总结，每个话题包含参与者、关键/矛盾点、结论。
-3. 参与者写群成员显示名；不确定参与者时写已有发言人。
-4. 关键/矛盾点必须来自聊天记录，避免泛泛而谈。
-5. 结论要短、具体；没有结论时写“暂无明确结论”。
-
-JSON 输出格式：
-{
-  "topics": [
-    {
-      "title": "话题名称",
-      "participants": ["参与者A", "参与者B"],
-      "key_points": ["关键点或矛盾点"],
-      "conclusion": "结论"
-    }
-  ]
-}`
       const customPrompt = String(this.config.get('aiGroupSummarySystemPrompt') || '').trim()
-      const systemPrompt = customPrompt ? `${defaultSystemPrompt}\n\n用户补充要求：\n${customPrompt}` : defaultSystemPrompt
+      const systemPrompt = customPrompt || DEFAULT_GROUP_SUMMARY_SYSTEM_PROMPT
       const userPrompt = `群聊：${params.displayName}
 总结时段：${formatTimestamp(params.periodStart)} 至 ${formatTimestamp(params.periodEnd)}
 消息数量：${readableMessages.length}
@@ -682,6 +745,55 @@ ${transcript}
       return { success: true, message: '群聊总结已生成', recordId: record.id, record }
     } catch (error) {
       return { success: false, message: `生成失败：${(error as Error).message || String(error)}` }
+    }
+  }
+
+  private async generateSummariesForPeriods(params: {
+    sessionId: string
+    displayName: string
+    avatarUrl?: string
+    periods: Array<{ start: number; end: number }>
+    triggerType: GroupSummaryTriggerType
+  }): Promise<GroupSummaryDayTriggerResult> {
+    const records: GroupSummaryRecordSummary[] = []
+    let skipped = 0
+    let failed = 0
+    let firstError = ''
+
+    for (const period of params.periods) {
+      const result = await this.generateSummaryForPeriod({
+        sessionId: params.sessionId,
+        displayName: params.displayName,
+        avatarUrl: params.avatarUrl,
+        periodStart: period.start,
+        periodEnd: period.end,
+        triggerType: params.triggerType
+      })
+      if (result.success && result.record) {
+        records.push(result.record)
+        continue
+      }
+      if (result.success && result.skipped) {
+        skipped += 1
+        continue
+      }
+      failed += 1
+      if (!firstError) firstError = result.message
+    }
+
+    const generated = records.length
+    const parts = [`生成 ${generated} 段`, `跳过 ${skipped} 段`]
+    if (failed > 0) parts.push(`失败 ${failed} 段`)
+    const message = failed > 0 && generated === 0 && skipped === 0
+      ? (firstError || '群聊总结生成失败')
+      : `群聊总结完成：${parts.join('，')}`
+
+    return {
+      success: generated > 0 || skipped > 0 || failed === 0,
+      message,
+      generated,
+      skipped,
+      records
     }
   }
 }

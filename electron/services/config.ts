@@ -833,6 +833,12 @@ export class ConfigService {
     if (!sharedModel && legacyModel) {
       this.set('aiModelApiModel', legacyModel)
     }
+
+    const groupSummaryFilterMode = String(this.store.get('aiGroupSummaryFilterMode' as any) || '').trim()
+    if (groupSummaryFilterMode === 'blacklist') {
+      this.store.set('aiGroupSummaryFilterList' as any, [] as any)
+      this.store.set('aiGroupSummaryFilterMode' as any, 'whitelist' as any)
+    }
   }
 
   // === 验证 ===

@@ -69,7 +69,7 @@ interface QuotedMessageJumpTarget {
 
 type GlobalMsgSearchPhase = 'idle' | 'seed' | 'backfill' | 'done'
 type GlobalMsgSearchResult = Message & { sessionId: string }
-type GroupSummaryRangeMode = 1 | 2 | 4 | 8 | 12 | 24 | 'custom'
+type GroupSummaryRangeMode = 1 | 2 | 4 | 8 | 12 | 24
 
 interface GlobalMsgPrefixCacheEntry {
   keyword: string
@@ -80,7 +80,6 @@ interface GlobalMsgPrefixCacheEntry {
 
 
 const GLOBAL_MSG_PER_SESSION_LIMIT = 10
-const GROUP_SUMMARY_MAX_RANGE_HOURS = 48
 const GLOBAL_MSG_SEED_LIMIT = 120
 const GLOBAL_MSG_BACKFILL_CONCURRENCY = 3
 const GLOBAL_MSG_LEGACY_CONCURRENCY = 6
@@ -770,21 +769,6 @@ function formatDateInputLocal(date: Date): string {
   const m = `${date.getMonth() + 1}`.padStart(2, '0')
   const day = `${date.getDate()}`.padStart(2, '0')
   return `${y}-${m}-${day}`
-}
-
-function formatDateTimeLocal(date: Date): string {
-  const y = date.getFullYear()
-  const m = `${date.getMonth() + 1}`.padStart(2, '0')
-  const day = `${date.getDate()}`.padStart(2, '0')
-  const h = `${date.getHours()}`.padStart(2, '0')
-  const min = `${date.getMinutes()}`.padStart(2, '0')
-  return `${y}-${m}-${day}T${h}:${min}`
-}
-
-function parseDateTimeLocalSeconds(value: string): number {
-  const parsed = new Date(value)
-  const time = parsed.getTime()
-  return Number.isFinite(time) ? Math.floor(time / 1000) : 0
 }
 
 function formatSummaryPeriod(start: number, end: number): string {
@@ -1505,6 +1489,7 @@ function ChatPage(props: ChatPageProps) {
   const sessionListRef = useRef<HTMLDivElement>(null)
   const jumpCalendarWrapRef = useRef<HTMLDivElement>(null)
   const jumpPopoverPortalRef = useRef<HTMLDivElement>(null)
+  const groupSummaryDateWrapRef = useRef<HTMLDivElement>(null)
   const [currentOffset, setCurrentOffset] = useState(0)
   const [jumpStartTime, setJumpStartTime] = useState(0)
   const [jumpEndTime, setJumpEndTime] = useState(0)
@@ -1574,8 +1559,7 @@ function ChatPage(props: ChatPageProps) {
   const [groupSummaryError, setGroupSummaryError] = useState<string | null>(null)
   const [groupSummaryDateFilter, setGroupSummaryDateFilter] = useState(() => formatDateInputLocal(new Date()))
   const [groupSummaryRangeMode, setGroupSummaryRangeMode] = useState<GroupSummaryRangeMode>(4)
-  const [groupSummaryCustomStart, setGroupSummaryCustomStart] = useState(() => formatDateTimeLocal(new Date(Date.now() - 4 * 60 * 60 * 1000)))
-  const [groupSummaryCustomEnd, setGroupSummaryCustomEnd] = useState(() => formatDateTimeLocal(new Date()))
+  const [showGroupSummaryDatePopover, setShowGroupSummaryDatePopover] = useState(false)
   const [isTriggeringGroupSummary, setIsTriggeringGroupSummary] = useState(false)
   const [groupSummaryHint, setGroupSummaryHint] = useState<{ success: boolean; message: string } | null>(null)
   const [groupSummaryLogRecord, setGroupSummaryLogRecord] = useState<GroupSummaryRecord | null>(null)
@@ -1903,25 +1887,29 @@ function ChatPage(props: ChatPageProps) {
     })
   }, [])
 
-  const getGroupSummaryDateRangeMs = useCallback(() => {
-    const date = groupSummaryDateFilter || formatDateInputLocal(new Date())
+  const getGroupSummaryDateRangeSeconds = useCallback((dateValue = groupSummaryDateFilter) => {
+    const date = dateValue || formatDateInputLocal(new Date())
     const start = new Date(`${date}T00:00:00`)
     if (!Number.isFinite(start.getTime())) {
       const fallback = new Date()
       fallback.setHours(0, 0, 0, 0)
       const fallbackEnd = new Date(fallback)
       fallbackEnd.setHours(23, 59, 59, 999)
-      return { startTime: fallback.getTime(), endTime: fallbackEnd.getTime() }
+      return { startTime: Math.floor(fallback.getTime() / 1000), endTime: Math.floor(fallbackEnd.getTime() / 1000) }
     }
     const end = new Date(start)
     end.setHours(23, 59, 59, 999)
-    return { startTime: start.getTime(), endTime: end.getTime() }
+    return { startTime: Math.floor(start.getTime() / 1000), endTime: Math.floor(end.getTime() / 1000) }
+  }, [groupSummaryDateFilter])
+
+  const isGroupSummaryToday = useMemo(() => {
+    return (groupSummaryDateFilter || formatDateInputLocal(new Date())) === formatDateInputLocal(new Date())
   }, [groupSummaryDateFilter])
 
   const loadGroupSummaryRecords = useCallback(async (sessionId?: string) => {
     const targetSessionId = String(sessionId || currentSessionRef.current || '').trim()
     if (!targetSessionId || !targetSessionId.endsWith('@chatroom')) return
-    const { startTime, endTime } = getGroupSummaryDateRangeMs()
+    const { startTime, endTime } = getGroupSummaryDateRangeSeconds()
     setGroupSummaryLoading(true)
     setGroupSummaryError(null)
     try {
@@ -1950,60 +1938,65 @@ function ChatPage(props: ChatPageProps) {
         setGroupSummaryLoading(false)
       }
     }
-  }, [getGroupSummaryDateRangeMs])
+  }, [getGroupSummaryDateRangeSeconds])
 
-  const resolveGroupSummaryManualRange = useCallback(() => {
+  const resolveTodayGroupSummaryManualRange = useCallback(() => {
     const nowSeconds = Math.floor(Date.now() / 1000)
-    if (groupSummaryRangeMode !== 'custom') {
-      const hours = Number(groupSummaryRangeMode)
-      return { startTime: nowSeconds - hours * 60 * 60, endTime: nowSeconds }
-    }
-    return {
-      startTime: parseDateTimeLocalSeconds(groupSummaryCustomStart),
-      endTime: parseDateTimeLocalSeconds(groupSummaryCustomEnd)
-    }
-  }, [groupSummaryCustomEnd, groupSummaryCustomStart, groupSummaryRangeMode])
+    const hours = Number(groupSummaryRangeMode)
+    return { startTime: nowSeconds - hours * 60 * 60, endTime: nowSeconds }
+  }, [groupSummaryRangeMode])
 
   const triggerManualGroupSummary = useCallback(async () => {
     const sessionId = String(currentSessionId || '').trim()
     if (!sessionId || !sessionId.endsWith('@chatroom')) return
     const sessionInfo = sessionMapRef.current.get(sessionId)
-    const { startTime, endTime } = resolveGroupSummaryManualRange()
-    if (startTime <= 0 || endTime <= startTime) {
-      setGroupSummaryHint({ success: false, message: '请选择有效的总结时段' })
-      return
-    }
-    if (endTime - startTime > GROUP_SUMMARY_MAX_RANGE_HOURS * 60 * 60) {
-      setGroupSummaryHint({ success: false, message: '手动总结时段不能超过 48 小时' })
-      return
-    }
+    const selectedDate = groupSummaryDateFilter || formatDateInputLocal(new Date())
+    const today = formatDateInputLocal(new Date())
 
     setIsTriggeringGroupSummary(true)
     setGroupSummaryHint({ success: true, message: '正在生成群聊总结...' })
     try {
-      const result = await window.electronAPI.groupSummary.triggerManual({
-        sessionId,
-        displayName: sessionInfo?.displayName || sessionId,
-        avatarUrl: sessionInfo?.avatarUrl,
-        startTime,
-        endTime
-      })
-      if (result.success) {
-        setGroupSummaryHint({ success: true, message: result.message || '群聊总结已生成' })
-        if (!result.skipped) {
-          const dateForFilter = formatDateInputLocal(new Date(startTime * 1000))
-          setGroupSummaryDateFilter(dateForFilter)
-          await loadGroupSummaryRecords(sessionId)
+      if (selectedDate === today) {
+        const { startTime, endTime } = resolveTodayGroupSummaryManualRange()
+        if (startTime <= 0 || endTime <= startTime) {
+          setGroupSummaryHint({ success: false, message: '请选择有效的总结时段' })
+          return
+        }
+        const result = await window.electronAPI.groupSummary.triggerManual({
+          sessionId,
+          displayName: sessionInfo?.displayName || sessionId,
+          avatarUrl: sessionInfo?.avatarUrl,
+          startTime,
+          endTime
+        })
+        if (result.success) {
+          setGroupSummaryHint({ success: true, message: result.message || '群聊总结已生成' })
+          if (!result.skipped) {
+            await loadGroupSummaryRecords(sessionId)
+          }
+        } else {
+          setGroupSummaryHint({ success: false, message: result.message || '群聊总结生成失败' })
         }
       } else {
-        setGroupSummaryHint({ success: false, message: result.message || '群聊总结生成失败' })
+        const result = await window.electronAPI.groupSummary.triggerDay({
+          sessionId,
+          displayName: sessionInfo?.displayName || sessionId,
+          avatarUrl: sessionInfo?.avatarUrl,
+          date: selectedDate
+        })
+        if (result.success) {
+          setGroupSummaryHint({ success: true, message: result.message || '群聊总结已生成' })
+          await loadGroupSummaryRecords(sessionId)
+        } else {
+          setGroupSummaryHint({ success: false, message: result.message || '群聊总结生成失败' })
+        }
       }
     } catch (error) {
       setGroupSummaryHint({ success: false, message: (error as Error).message || String(error) })
     } finally {
       setIsTriggeringGroupSummary(false)
     }
-  }, [currentSessionId, loadGroupSummaryRecords, resolveGroupSummaryManualRange])
+  }, [currentSessionId, groupSummaryDateFilter, loadGroupSummaryRecords, resolveTodayGroupSummaryManualRange])
 
   const openGroupSummaryLog = useCallback(async (recordId: string) => {
     try {
@@ -5699,6 +5692,20 @@ function ChatPage(props: ChatPageProps) {
   }, [showJumpPopover])
 
   useEffect(() => {
+    if (!showGroupSummaryDatePopover) return
+    const handleGlobalPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null
+      if (!target) return
+      if (groupSummaryDateWrapRef.current?.contains(target)) return
+      setShowGroupSummaryDatePopover(false)
+    }
+    document.addEventListener('mousedown', handleGlobalPointerDown)
+    return () => {
+      document.removeEventListener('mousedown', handleGlobalPointerDown)
+    }
+  }, [showGroupSummaryDatePopover])
+
+  useEffect(() => {
     if (!showJumpPopover) return
     const syncPosition = () => {
       requestAnimationFrame(() => updateJumpPopoverPosition())
@@ -7917,11 +7924,24 @@ function ChatPage(props: ChatPageProps) {
                   <div className="group-summary-controls">
                     <div className="group-summary-date-row">
                       <label>日期</label>
-                      <input
-                        type="date"
-                        value={groupSummaryDateFilter}
-                        onChange={(event) => setGroupSummaryDateFilter(event.target.value || formatDateInputLocal(new Date()))}
-                      />
+                      <div className="group-summary-date-picker" ref={groupSummaryDateWrapRef}>
+                        <button
+                          type="button"
+                          className={`group-summary-date-trigger ${showGroupSummaryDatePopover ? 'open' : ''}`}
+                          onClick={() => setShowGroupSummaryDatePopover((open) => !open)}
+                        >
+                          <span>{groupSummaryDateFilter}</span>
+                          <Calendar size={14} />
+                        </button>
+                        <JumpToDatePopover
+                          isOpen={showGroupSummaryDatePopover}
+                          onClose={() => setShowGroupSummaryDatePopover(false)}
+                          currentDate={new Date(`${groupSummaryDateFilter || formatDateInputLocal(new Date())}T00:00:00`)}
+                          onSelect={(date) => setGroupSummaryDateFilter(formatDateInputLocal(date))}
+                          className="group-summary-calendar-popover"
+                          maxDate={new Date()}
+                        />
+                      </div>
                       <button
                         type="button"
                         className="group-summary-icon-btn"
@@ -7932,39 +7952,21 @@ function ChatPage(props: ChatPageProps) {
                       </button>
                     </div>
 
-                    <div className="group-summary-range-tabs">
-                      {([1, 2, 4, 8, 12, 24] as const).map((hours) => (
-                        <button
-                          key={hours}
-                          type="button"
-                          className={groupSummaryRangeMode === hours ? 'active' : ''}
-                          onClick={() => setGroupSummaryRangeMode(hours)}
-                        >
-                          {hours}h
-                        </button>
-                      ))}
-                      <button
-                        type="button"
-                        className={groupSummaryRangeMode === 'custom' ? 'active' : ''}
-                        onClick={() => setGroupSummaryRangeMode('custom')}
-                      >
-                        自定义
-                      </button>
-                    </div>
-
-                    {groupSummaryRangeMode === 'custom' && (
-                      <div className="group-summary-custom-range">
-                        <input
-                          type="datetime-local"
-                          value={groupSummaryCustomStart}
-                          onChange={(event) => setGroupSummaryCustomStart(event.target.value)}
-                        />
-                        <input
-                          type="datetime-local"
-                          value={groupSummaryCustomEnd}
-                          onChange={(event) => setGroupSummaryCustomEnd(event.target.value)}
-                        />
+                    {isGroupSummaryToday ? (
+                      <div className="group-summary-range-tabs">
+                        {([1, 2, 4, 8, 12, 24] as const).map((hours) => (
+                          <button
+                            key={hours}
+                            type="button"
+                            className={groupSummaryRangeMode === hours ? 'active' : ''}
+                            onClick={() => setGroupSummaryRangeMode(hours)}
+                          >
+                            {hours}h
+                          </button>
+                        ))}
                       </div>
+                    ) : (
+                      <div className="group-summary-rule-hint">将按设置里的自动总结间隔切分选中日期的完整聊天记录。</div>
                     )}
 
                     <button
@@ -7976,7 +7978,9 @@ function ChatPage(props: ChatPageProps) {
                       {isTriggeringGroupSummary ? <Loader2 size={14} className="spin" /> : <Sparkles size={14} />}
                       <span>生成总结</span>
                     </button>
-                    <div className="group-summary-rule-hint">少于 5 条可总结消息会自动跳过。</div>
+                    <div className="group-summary-rule-hint">
+                      {isGroupSummaryToday ? '少于 5 条可总结消息会自动跳过。' : '每个切片少于 5 条可总结消息会自动跳过。'}
+                    </div>
                   </div>
 
                   <div className="group-summary-list">
