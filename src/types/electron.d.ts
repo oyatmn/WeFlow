@@ -711,6 +711,8 @@ export interface ElectronAPI {
         imageMessages: number
         videoMessages: number
         emojiMessages: number
+        /** 文件类消息数量 */
+        fileMessages: number
         transferMessages: number
         redPacketMessages: number
         callMessages: number

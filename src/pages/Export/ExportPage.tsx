@@ -68,7 +68,7 @@ function ExportPage() {
   } = useContactsLoader()
 
   // ── 3. Metrics ──
-  const { metricsMap, fetchMetrics } = useSessionMetrics()
+  const { metricsMap, fetchMetrics, loadingRefs } = useSessionMetrics()
 
   const {
     sessions,
@@ -286,6 +286,7 @@ function ExportPage() {
             sortConfig={sortConfig}
             onSortChange={setSortConfig}
             metricsMap={metricsMap}
+            loadingRefs={loadingRefs}
             onSingleExport={handleSingleExport}
             onBatchExport={handleExportSelected}
             onAutomationExport={handleAutomationExportFromSelection}

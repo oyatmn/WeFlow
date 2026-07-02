@@ -23,6 +23,7 @@ interface SessionTableProps {
   onAutomationExport?: () => void
   isLoading?: boolean
   metricsMap?: Record<string, SessionContentMetric>
+  loadingRefs?: Set<string>
 }
 
 const SessionTable: React.FC<SessionTableProps> = ({
@@ -39,7 +40,8 @@ const SessionTable: React.FC<SessionTableProps> = ({
   onBatchExport,
   onAutomationExport,
   isLoading,
-  metricsMap
+  metricsMap,
+  loadingRefs
 }) => {
   const virtuosoRef = useRef<VirtuosoHandle>(null)
 
@@ -160,9 +162,35 @@ const SessionTable: React.FC<SessionTableProps> = ({
 
       {/* ─── Virtualized List ─────────────────────────────────────────── */}
       <div className="table-body">
-        {sessions.length === 0 ? (
+        {isLoading && sessions.length === 0 ? (
+          // 初始加载骨架屏，风格与「我的足迹」保持一致
+          <div className="st-skeleton-body" aria-busy="true" aria-live="polite">
+            <div className="st-skeleton-header">
+              {Array.from({ length: 10 }).map((_, i) => (
+                <div key={i} className="st-skeleton-cell st-skeleton-shimmer" />
+              ))}
+            </div>
+            <div className="st-skeleton-rows">
+              {Array.from({ length: 10 }).map((_, rowIndex) => (
+                <div key={rowIndex} className="st-skeleton-row">
+                  <div className="st-skeleton-checkbox st-skeleton-shimmer" />
+                  <div className="st-skeleton-info">
+                    <div className="st-skeleton-avatar st-skeleton-shimmer" />
+                    <div className="st-skeleton-text">
+                      <div className="st-skeleton-line st-skeleton-shimmer" />
+                      <div className="st-skeleton-line short st-skeleton-shimmer" />
+                    </div>
+                  </div>
+                  {Array.from({ length: 7 }).map((_, i) => (
+                    <div key={i} className="st-skeleton-stat st-skeleton-shimmer" />
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : sessions.length === 0 ? (
           <div className="empty-state">
-            {isLoading ? '加载中...' : (searchQuery ? '没有匹配的会话' : '此分类下没有会话')}
+            {searchQuery ? '没有匹配的会话' : '此分类下没有会话'}
           </div>
         ) : (
           <Virtuoso
@@ -170,8 +198,9 @@ const SessionTable: React.FC<SessionTableProps> = ({
             data={sessions}
             itemContent={(index, session) => {
               if (!session) return null
-              
+
               const metrics = metricsMap?.[session.username]
+              const isMetricsLoading = !metrics && loadingRefs?.has(session.username)
               const totalCount = metrics?.totalMessages ?? session.messageCountHint ?? 0
 
               return (
@@ -198,17 +227,53 @@ const SessionTable: React.FC<SessionTableProps> = ({
                       <span className="st-id" title={session.username}>{session.username}</span>
                     </div>
                   </div>
-                  <div className="col-count">{totalCount.toLocaleString()}</div>
+                  <div className="col-count">
+                    {isMetricsLoading ? (
+                      <span className="st-stat-shimmer" />
+                    ) : (
+                      <span className="st-stat-fade-in">{totalCount.toLocaleString()}</span>
+                    )}
+                  </div>
                   <div className="col-time">
                     {session.lastTimestamp ? formatLatestMessageTimeFromSeconds(session.lastTimestamp).text : '-'}
                   </div>
-                  <div className="col-stat">{metrics?.emojiMessages ?? '-'}</div>
-                  <div className="col-stat">{metrics?.voiceMessages ?? '-'}</div>
-                  <div className="col-stat">{metrics?.imageMessages ?? '-'}</div>
-                  <div className="col-stat">{metrics?.videoMessages ?? '-'}</div>
-                  <div className="col-stat">{metrics?.fileMessages ?? '-'}</div>
+                  <div className="col-stat">
+                    {isMetricsLoading ? (
+                      <span className="st-stat-shimmer" />
+                    ) : (
+                      <span className="st-stat-fade-in">{metrics?.emojiMessages ?? '-'}</span>
+                    )}
+                  </div>
+                  <div className="col-stat">
+                    {isMetricsLoading ? (
+                      <span className="st-stat-shimmer" />
+                    ) : (
+                      <span className="st-stat-fade-in">{metrics?.voiceMessages ?? '-'}</span>
+                    )}
+                  </div>
+                  <div className="col-stat">
+                    {isMetricsLoading ? (
+                      <span className="st-stat-shimmer" />
+                    ) : (
+                      <span className="st-stat-fade-in">{metrics?.imageMessages ?? '-'}</span>
+                    )}
+                  </div>
+                  <div className="col-stat">
+                    {isMetricsLoading ? (
+                      <span className="st-stat-shimmer" />
+                    ) : (
+                      <span className="st-stat-fade-in">{metrics?.videoMessages ?? '-'}</span>
+                    )}
+                  </div>
+                  <div className="col-stat">
+                    {isMetricsLoading ? (
+                      <span className="st-stat-shimmer" />
+                    ) : (
+                      <span className="st-stat-fade-in">{metrics?.fileMessages ?? '-'}</span>
+                    )}
+                  </div>
                   <div className="col-action">
-                    <button 
+                    <button
                       className="st-action-btn"
                       onClick={(e) => {
                         e.stopPropagation()

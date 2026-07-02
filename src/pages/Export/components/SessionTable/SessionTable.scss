@@ -288,3 +288,144 @@
     }
   }
 }
+
+// ── Skeleton Loading (参考「我的足迹」的 skeleton-shimmer 风格) ─────────
+.st-skeleton-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0 24px;
+
+  .st-skeleton-header {
+    display: grid;
+    grid-template-columns: 48px minmax(200px, 1fr) 80px 120px 60px 60px 60px 60px 60px 80px;
+    align-items: center;
+    gap: 8px;
+    height: 44px;
+    border-bottom: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
+
+    .st-skeleton-cell {
+      height: 14px;
+      border-radius: 4px;
+
+      &:nth-child(3),
+      &:nth-child(4),
+      &:nth-child(5),
+      &:nth-child(6),
+      &:nth-child(7),
+      &:nth-child(8),
+      &:nth-child(9) {
+        margin-left: auto;
+        width: 60%;
+      }
+
+      &:last-child {
+        margin: 0 auto;
+        width: 50%;
+      }
+    }
+  }
+
+  .st-skeleton-rows {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+
+    .st-skeleton-row {
+      display: grid;
+      grid-template-columns: 48px minmax(200px, 1fr) 80px 120px 60px 60px 60px 60px 60px 80px;
+      align-items: center;
+      gap: 8px;
+      height: 64px;
+      border-bottom: 1px solid color-mix(in srgb, var(--border-color) 20%, transparent);
+      padding: 0;
+
+      .st-skeleton-checkbox {
+        width: 18px;
+        height: 18px;
+        border-radius: 4px;
+      }
+
+      .st-skeleton-info {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+
+        .st-skeleton-avatar {
+          width: 40px;
+          height: 40px;
+          border-radius: 8px;
+          flex-shrink: 0;
+        }
+
+        .st-skeleton-text {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          flex: 1;
+          overflow: hidden;
+
+          .st-skeleton-line {
+            height: 14px;
+            border-radius: 4px;
+            width: 60%;
+
+            &.short {
+              width: 40%;
+            }
+          }
+        }
+      }
+
+      .st-skeleton-stat {
+        height: 14px;
+        border-radius: 4px;
+        width: 60%;
+        margin-left: auto;
+      }
+    }
+  }
+}
+
+.st-skeleton-shimmer {
+  position: relative;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--text-tertiary) 6%, transparent);
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in srgb, var(--bg-primary) 50%, transparent),
+      transparent
+    );
+    transform: translateX(-100%);
+    animation: stShimmer 1.5s infinite;
+  }
+}
+
+@keyframes stShimmer {
+  100% { transform: translateX(100%); }
+}
+
+// 行级统计 shimmer 占位与数字淡入
+.st-stat-shimmer {
+  display: inline-block;
+  width: 20px;
+  height: 10px;
+  border-radius: 4px;
+  @extend .st-skeleton-shimmer;
+}
+
+.st-stat-fade-in {
+  animation: stStatFadeIn 0.2s ease forwards;
+}
+
+@keyframes stStatFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
